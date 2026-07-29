@@ -12,6 +12,9 @@ namespace CiyuanSha.UI;
 /// <summary>One renderer for every protocol-V2 choice kind.</summary>
 public partial class GenericChoicePanel : Control
 {
+    [Export]
+    public bool PreviewMode { get; set; }
+
     private Panel? _panel;
     private Label? _prompt;
     private GridContainer? _options;
@@ -30,8 +33,15 @@ public partial class GenericChoicePanel : Control
         AnchorBottom = 0.98f;
         ZIndex = 80;
         BuildUi();
-        Bind();
-        Refresh();
+        if (PreviewMode)
+        {
+            SetRequest(BuildPreviewRequest());
+        }
+        else
+        {
+            Bind();
+            Refresh();
+        }
     }
 
     public override void _ExitTree()
@@ -125,7 +135,12 @@ public partial class GenericChoicePanel : Control
         {
             request = network.LastMatchStateSnapshot?.ActiveChoice;
         }
-        SetRequest(request?.ActingSeatId == localSeatId ? request : null);
+        request = request?.ActingSeatId == localSeatId ? request : null;
+        if (request?.Kind is ChoiceKind.SelectTarget or ChoiceKind.UseOrRespond)
+        {
+            request = null;
+        }
+        SetRequest(request);
     }
 
     private void SetRequest(ChoiceRequest? request)
@@ -148,7 +163,7 @@ public partial class GenericChoicePanel : Control
         Visible = true;
         if (_prompt is not null)
         {
-            _prompt.Text = $"{request.PromptKey}  ·  选择 {request.MinimumSelections}–{request.MaximumSelections} 项";
+            _prompt.Text = $"{FormatPrompt(request.PromptKey)} · 选择 {request.MinimumSelections}–{request.MaximumSelections} 项";
         }
         ClearChildren(_options);
         if (_options is not null)
@@ -156,7 +171,7 @@ public partial class GenericChoicePanel : Control
             _options.Columns = request.Options.Count <= 3 ? Math.Max(1, request.Options.Count) : 4;
             foreach (ChoiceOption option in request.Options)
             {
-                Button button = CreateButton(string.IsNullOrWhiteSpace(option.LabelKey) ? option.EntityId : option.LabelKey);
+                Button button = CreateButton(FormatOptionLabel(option));
                 button.Disabled = !option.IsEnabled;
                 button.TooltipText = option.IsEnabled ? option.EntityId : option.DisabledReasonKey;
                 button.ToggleMode = request.MaximumSelections > 1;
@@ -239,6 +254,55 @@ public partial class GenericChoicePanel : Control
         CyberStyle.ApplyButton(button, CyberButtonKind.Primary);
         return button;
     }
+
+    private static string FormatPrompt(string promptKey) => promptKey switch
+    {
+        "phase.play.choose_action" => "请选择出牌阶段操作",
+        "card.choose_target" => "请选择目标",
+        "phase.discard.choose" => "请选择要弃置的牌",
+        "response.dodge" => "请使用【闪】或放弃响应",
+        "response.nullification" => "请使用【无懈可击】或放弃响应",
+        "skill.choose_cost" => "请选择技能费用",
+        "skill.choose_target" => "请选择技能目标",
+        _ => promptKey
+    };
+
+    private static string FormatOptionLabel(ChoiceOption option)
+    {
+        if (!string.IsNullOrWhiteSpace(option.LabelKey) && !option.LabelKey.Contains('.', StringComparison.Ordinal))
+        {
+            return option.LabelKey;
+        }
+        return option.LabelKey switch
+        {
+            "action.end_play" => "结束出牌",
+            "action.recast" => "重铸",
+            "target.player" => $"角色 {option.EntityId}",
+            "response.decline" => "放弃响应",
+            "damage.physical" => "普通伤害",
+            "damage.fire" => "火焰伤害",
+            "phase.discard.card" => $"弃牌 {option.EntityId}",
+            _ => string.IsNullOrWhiteSpace(option.EntityId) ? option.LabelKey : option.EntityId
+        };
+    }
+
+    private static ChoiceRequest BuildPreviewRequest() => new(
+        "preview-choice",
+        1,
+        1,
+        ChoiceKind.SelectAction,
+        "phase.play.choose_action",
+        new[]
+        {
+            new ChoiceOption("action:use:slash", ChoiceOptionKind.Card, "杀", "card-0042"),
+            new ChoiceOption("action:use:fire_attack", ChoiceOptionKind.Card, "火攻", "card-0088"),
+            new ChoiceOption("action:skill:limit_break", ChoiceOptionKind.Skill, "破界", "limit_break"),
+            new ChoiceOption("action:recast:iron_chain", ChoiceOptionKind.Action, "action.recast", "card-0101"),
+            new ChoiceOption("action:end_play", ChoiceOptionKind.Action, "action.end_play")
+        },
+        MinimumSelections: 1,
+        MaximumSelections: 2,
+        AllowCancel: true);
 
     private static void ClearChildren(Node? node)
     {

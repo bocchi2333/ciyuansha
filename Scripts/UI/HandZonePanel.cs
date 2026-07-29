@@ -504,6 +504,7 @@ public partial class HandZonePanel : Control
         RebuildHarvestCards();
         RebuildTargetCardSelectionCards();
         GameManager? gameManager = GameManager.Instance;
+        bool isCorePresentation = gameManager?.IsCoreMatchActive == true;
         bool hasPendingHandCardSelection = gameManager?.HasPendingHandCardSelection == true;
         bool canChoosePendingHandCard = hasPendingHandCardSelection
             && gameManager?.PendingHandCardSelectionPeerId == _localCharacter.OwnerPeerId;
@@ -511,7 +512,7 @@ public partial class HandZonePanel : Control
             ? (gameManager?.HandCardSelectionPool.Select(card => card.InstanceId).ToHashSet() ?? new HashSet<string>())
             : new HashSet<string>();
 
-        if (!hasPendingHandCardSelection)
+        if (!hasPendingHandCardSelection && !isCorePresentation)
         {
             RebuildActiveSkillButtons();
         }
@@ -540,8 +541,9 @@ public partial class HandZonePanel : Control
         for (int index = 0; index < handCards.Count; index++)
         {
             CardInstance card = handCards[index];
-            bool disabledForPendingChoice = hasPendingHandCardSelection
-                && (!canChoosePendingHandCard || !pendingHandCardIds.Contains(card.InstanceId));
+            bool disabledForPendingChoice = isCorePresentation
+                || (hasPendingHandCardSelection
+                    && (!canChoosePendingHandCard || !pendingHandCardIds.Contains(card.InstanceId)));
             InkCardButton button = new()
             {
                 Text = CardDisplayFormatter.FormatCardFace(card),
@@ -549,7 +551,9 @@ public partial class HandZonePanel : Control
                 ToggleMode = true,
                 ButtonPressed = card.InstanceId == _selectedCardInstanceId,
                 Disabled = disabledForPendingChoice,
-                TooltipText = hasPendingHandCardSelection
+                TooltipText = isCorePresentation
+                    ? "此处仅展示手牌；请在统一选择面板中提交合法操作。"
+                    : hasPendingHandCardSelection
                     ? (canChoosePendingHandCard
                         ? BattleLogTextLocalizer.Localize(gameManager?.PendingHandCardSelectionPrompt ?? card.Description)
                         : "等待其他玩家选择手牌。")

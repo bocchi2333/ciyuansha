@@ -20,6 +20,26 @@ public enum GamePhase
     Finished = 7
 }
 
+public enum PhaseDirectiveKind
+{
+    Skip = 0,
+    Replace = 1,
+    Extra = 2
+}
+
+/// <summary>
+/// Deterministic phase mutation. Extra inserts <see cref="ReplacementPhase"/>
+/// immediately before <see cref="Phase"/> and resumes the original phase after
+/// the inserted phase completes.
+/// </summary>
+public sealed record PhaseDirective(
+    long Sequence,
+    int SeatId,
+    PhaseDirectiveKind Kind,
+    GamePhase Phase,
+    GamePhase ReplacementPhase = GamePhase.NotStarted,
+    string SourceId = "");
+
 public enum CardZone
 {
     None = 0,

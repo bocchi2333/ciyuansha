@@ -6,6 +6,9 @@ using CiyuanSha.GameCore.Events;
 using CiyuanSha.GameCore.Modes;
 using CiyuanSha.GameCore.Replay;
 using CiyuanSha.GameCore.Skills;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 
 namespace CiyuanSha.GameCore.Engine;
 
@@ -14,6 +17,7 @@ public sealed class GameEngine
     private readonly MatchConfig _config;
     private readonly ContentRegistry _content;
     private readonly IGameMode _mode;
+    private readonly EffectRegistry _effects;
     private readonly DeterministicRandom _random;
     private readonly ResolutionStack _resolutionStack = new();
     private readonly List<RuleEvent> _stepEvents = new();
@@ -21,11 +25,12 @@ public sealed class GameEngine
     private long _eventSequence;
     private long _choiceSequence;
 
-    private GameEngine(MatchConfig config, ContentRegistry content, IGameMode mode)
+    private GameEngine(MatchConfig config, ContentRegistry content, IGameMode mode, EffectRegistry effects)
     {
         _config = config;
         _content = content;
         _mode = mode;
+        _effects = effects;
         _random = new DeterministicRandom(config.Seed);
         State = new GameState
         {
@@ -44,7 +49,8 @@ public sealed class GameEngine
     public static GameEngine Start(
         MatchConfig config,
         ContentRegistry content,
-        GameModeRegistry? modes = null)
+        GameModeRegistry? modes = null,
+        EffectRegistry? effects = null)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(content);
@@ -56,7 +62,7 @@ public sealed class GameEngine
             throw new InvalidOperationException($"Match configuration is invalid: {validation.ErrorKey}");
         }
 
-        GameEngine engine = new(config, content, mode);
+        GameEngine engine = new(config, content, mode, effects ?? BuiltInEffects.CreateRegistry());
         engine.Initialize();
         return engine;
     }
@@ -111,10 +117,16 @@ public sealed class GameEngine
             State.Status = MatchStatus.Faulted;
             State.ResultMessage = exception.Message;
             CommitMutation();
-            Emit(RuleEventKind.StateFaulted, 0, Array.Empty<int>(), new TextRuleEventPayload("engine.fault", new Dictionary<string, string>
+            RuleEvent faultEvent = CreateRuleEvent(
+                RuleEventKind.StateFaulted,
+                0,
+                Array.Empty<int>(),
+                new TextRuleEventPayload("engine.fault", new Dictionary<string, string>
             {
                 ["message"] = exception.Message
-            }));
+            })).AtStage(RuleEventStage.Faulted);
+            _stepEvents.Add(faultEvent);
+            Journal.Append(JournalEntryKind.RuleEvent, State.ComputeCanonicalHash(), faultEvent);
             Journal.Append(JournalEntryKind.Fault, State.ComputeCanonicalHash(), message: exception.ToString());
             return BuildResult(EngineProgress.Faulted, "engine.unhandled_fault");
         }
@@ -145,7 +157,7 @@ public sealed class GameEngine
                 new Dictionary<EquipmentSlot, string>(player.Equipment),
                 player.JudgementArea.ToArray(),
                 new Dictionary<string, int>(player.Marks),
-                player.SkillIds.ToArray()));
+                player.SkillIds.Concat(player.TemporarySkillIds).Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToArray()));
         }
 
         List<CardView> publicCards = State.Cards.Values
@@ -157,6 +169,16 @@ public sealed class GameEngine
             : State.Players.TryGetValue(viewerSeatId, out PlayerState? viewerPlayer)
                 ? viewerPlayer.Hand.ToArray()
                 : Array.Empty<string>();
+        IReadOnlyList<CardView> privateHandCards = privateHand
+            .Select(cardId => State.Cards[cardId])
+            .OrderBy(card => card.OwnerSeatId)
+            .ThenBy(card => card.InstanceId, StringComparer.Ordinal)
+            .Select(card => new CardView(card.InstanceId, card.DefinitionId, card.Suit, card.Rank, card.Zone, card.OwnerSeatId))
+            .ToArray();
+        ChoiceRequest? visibleChoice = State.PendingChoice?.RedactFor(viewer);
+        string visibleHash = omniscient
+            ? State.ComputeCanonicalHash()
+            : ComputeViewHash(players, publicCards, privateHandCards, visibleChoice);
 
         return new GameView
         {
@@ -170,14 +192,61 @@ public sealed class GameEngine
             Players = players,
             PublicCards = publicCards,
             PrivateHandCardIds = privateHand,
+            PrivateHandCards = privateHandCards,
             DrawPileCount = State.DrawPile.Count,
             DiscardPileCount = State.DiscardPile.Count,
-            PendingChoice = State.PendingChoice?.RedactFor(viewer),
+            PendingChoice = visibleChoice,
             ContentPacks = State.ContentPacks.ToArray(),
             WinnerSeatIds = State.WinnerSeatIds.ToArray(),
             ResultMessage = State.ResultMessage,
-            StateHash = State.ComputeCanonicalHash()
+            StateHash = visibleHash
         };
+    }
+
+    private string ComputeViewHash(
+        IReadOnlyList<PlayerView> players,
+        IReadOnlyList<CardView> publicCards,
+        IReadOnlyList<CardView> privateCards,
+        ChoiceRequest? visibleChoice)
+    {
+        string json = JsonSerializer.Serialize(new
+        {
+            State.MatchId,
+            State.Revision,
+            State.ModeId,
+            Status = (int)State.Status,
+            Phase = (int)State.Phase,
+            State.CurrentSeatId,
+            State.RoundNumber,
+            Players = players.OrderBy(player => player.SeatId).Select(player => new
+            {
+                player.SeatId,
+                player.DisplayName,
+                player.GeneralId,
+                Role = (int)player.Role,
+                player.IsRoleVisible,
+                Team = (int)player.Team,
+                Controller = (int)player.Controller,
+                player.Health,
+                player.MaxHealth,
+                player.IsAlive,
+                player.IsChained,
+                player.HandCount,
+                Equipment = player.Equipment.OrderBy(item => item.Key).Select(item => new { Slot = (int)item.Key, item.Value }),
+                Judgement = player.JudgementArea.OrderBy(value => value, StringComparer.Ordinal),
+                Marks = player.Marks.OrderBy(item => item.Key, StringComparer.Ordinal),
+                Skills = player.SkillIds.OrderBy(value => value, StringComparer.Ordinal)
+            }),
+            PublicCards = publicCards.OrderBy(card => card.InstanceId, StringComparer.Ordinal),
+            PrivateCards = privateCards.OrderBy(card => card.InstanceId, StringComparer.Ordinal),
+            DrawPileCount = State.DrawPile.Count,
+            DiscardPileCount = State.DiscardPile.Count,
+            Choice = visibleChoice,
+            Packs = State.ContentPacks.OrderBy(pack => pack.PackId, StringComparer.Ordinal),
+            Winners = State.WinnerSeatIds.OrderBy(value => value),
+            State.ResultMessage
+        });
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json))).ToLowerInvariant();
     }
 
     public RuleJournalDelta? BuildDelta(long afterCursor) => Journal.TryGetDelta(afterCursor, out RuleJournalDelta delta) ? delta : null;
@@ -215,6 +284,7 @@ public sealed class GameEngine
                     throw new InvalidOperationException($"General {general.GeneralId} references unknown skill {skillId}.");
                 }
                 player.SkillIds.Add(skillId);
+                InitializeSkillMarks(player, _content.Skills[skillId]);
             }
             State.Players.Add(player.SeatId, player);
             State.TurnOrder.Add(player.SeatId);
@@ -305,11 +375,11 @@ public sealed class GameEngine
                     break;
                 case GamePhase.Draw:
                     int drawCount = 2;
-                    if (HasSkill(current, "bonus_draw"))
+                    if (HasSkillEffect(current, "skill.bonus_draw"))
                     {
                         drawCount++;
                     }
-                    if (HasSkill(current, "boss_pressure"))
+                    if (HasSkillEffect(current, "skill.boss_pressure"))
                     {
                         drawCount++;
                     }
@@ -327,7 +397,14 @@ public sealed class GameEngine
                     }
                     break;
                 case GamePhase.End:
-                    AdvanceTurn();
+                    if (State.ExtraPhaseResume != GamePhase.NotStarted)
+                    {
+                        ChangePhase(State.ExtraPhaseResume);
+                    }
+                    else
+                    {
+                        AdvanceTurn();
+                    }
                     break;
                 default:
                     throw new InvalidOperationException($"Unsupported phase: {State.Phase}");
@@ -339,6 +416,7 @@ public sealed class GameEngine
     {
         ChoiceRequest acceptedRequest = State.PendingChoice!;
         PendingOperation operation = _pendingOperation ?? throw new InvalidOperationException("Pending choice has no operation.");
+        ResumeChoiceFrame(result);
         Journal.Append(JournalEntryKind.ChoiceAccepted, State.ComputeCanonicalHash(), choiceResult: result);
         State.PendingChoice = null;
         _pendingOperation = null;
@@ -481,6 +559,17 @@ public sealed class GameEngine
             }
         }
         options.Add(new ChoiceOption("action:end_play", ChoiceOptionKind.Action, "action.end_play", AiValue: -0.1));
+        if (State.PendingChoice is ChoiceRequest existing
+            && existing.Kind == ChoiceKind.SelectAction
+            && existing.ActingSeatId == player.SeatId
+            && _pendingOperation?.Kind == PendingOperationKind.PlayAction)
+        {
+            // Deterministic test/setup tools may adjust a hand before the first
+            // choice is submitted. Refreshing legal options must not create a
+            // second suspended resolution frame.
+            State.PendingChoice = existing with { Options = options };
+            return;
+        }
         SetChoice(player.SeatId, ChoiceKind.SelectAction, "phase.play.choose_action", options, PendingOperationKind.PlayAction);
     }
 
@@ -531,6 +620,7 @@ public sealed class GameEngine
         }
 
         CardDefinition definition = _content.Cards[State.Cards[cardInstanceId].DefinitionId];
+        EnsureCardEffectContext(source, State.Cards[cardInstanceId], Array.Empty<PlayerState>(), definition);
         switch (definition.EffectId)
         {
             case "card.peach":
@@ -619,9 +709,7 @@ public sealed class GameEngine
                 MoveHandCardToJudgement(sourceSeatId, sourceSeatId, cardInstanceId);
                 break;
             default:
-                MoveHandCardToProcessing(sourceSeatId, cardInstanceId);
-                FinishUsedCard(cardInstanceId);
-                break;
+                throw new InvalidOperationException($"Unsupported playable card effect: {definition.EffectId}");
         }
     }
 
@@ -683,6 +771,11 @@ public sealed class GameEngine
     {
         CardState card = State.Cards[operation.CardInstanceId];
         CardDefinition definition = _content.Cards[card.DefinitionId];
+        EnsureCardEffectContext(
+            State.Players[operation.SourceSeatId],
+            card,
+            targets.Select(targetSeatId => State.Players[targetSeatId]).ToArray(),
+            definition);
         CardZone fromZone = card.Zone;
         if (fromZone == CardZone.Hand)
         {
@@ -772,8 +865,7 @@ public sealed class GameEngine
                 BeginBorrowSword(operation.SourceSeatId, targets[0], operation.CardInstanceId);
                 break;
             default:
-                FinishUsedCard(operation.CardInstanceId);
-                break;
+                throw new InvalidOperationException($"Unsupported targeted card effect: {definition.EffectId}");
         }
     }
 
@@ -910,8 +1002,7 @@ public sealed class GameEngine
                 FinishUsedCard(operation.CardInstanceId);
                 break;
             default:
-                FinishUsedCard(operation.CardInstanceId);
-                break;
+                throw new InvalidOperationException($"Unsupported nullifiable card effect: {effectId}");
         }
     }
 
@@ -1744,15 +1835,39 @@ public sealed class GameEngine
             });
             return;
         }
+        PendingOperation dodgeOperation = new()
+        {
+            Kind = PendingOperationKind.RespondDodge,
+            SourceSeatId = sourceSeatId,
+            TargetSeatId = targetSeatId,
+            CardInstanceId = cardInstanceId,
+            OtherCardInstanceId = followUpCardId,
+            DamageNatureOverride = natureOverride,
+            Continuation = continuation,
+            DamageAmount = damageAmount
+        };
+        string? autoDodgeSkillId = FindSkillIdByEffect(target, "skill.auto_dodge");
+        if (autoDodgeSkillId is not null
+            && target.Marks.GetValueOrDefault($"skill:{autoDodgeSkillId}:round") != State.RoundNumber)
+        {
+            target.Marks[$"skill:{autoDodgeSkillId}:round"] = State.RoundNumber;
+            CommitMutation();
+            Emit(RuleEventKind.SkillTriggered, targetSeatId, new[] { targetSeatId }, new TextRuleEventPayload("skill.triggered", new Dictionary<string, string>
+            {
+                ["skillId"] = autoDodgeSkillId
+            }));
+            if (TryRequestPostDodgeWeapon(dodgeOperation))
+            {
+                return;
+            }
+            CompleteAvoidedSlash(dodgeOperation);
+            return;
+        }
+
         List<ChoiceOption> options = target.Hand
             .Where(cardId => _content.Cards[State.Cards[cardId].DefinitionId].EffectId == "card.dodge")
             .Select(cardId => new ChoiceOption($"card:{cardId}", ChoiceOptionKind.Card, "card.dodge", cardId, AiValue: 10))
             .ToList();
-        if (HasSkill(target, "auto_dodge")
-            && target.Marks.GetValueOrDefault("skill:auto_dodge:round") != State.RoundNumber)
-        {
-            options.Add(new ChoiceOption("skill:auto_dodge", ChoiceOptionKind.Skill, "skill.auto_dodge", AiValue: 12));
-        }
         if (!armorIgnored && HasEquippedCard(target, "eight_diagram"))
         {
             options.Add(new ChoiceOption("equipment:eight_diagram", ChoiceOptionKind.Skill, "equipment.eight_diagram", AiValue: 9));
@@ -1764,17 +1879,7 @@ public sealed class GameEngine
             "response.dodge",
             options,
             PendingOperationKind.RespondDodge,
-            operation: new PendingOperation
-            {
-                Kind = PendingOperationKind.RespondDodge,
-                SourceSeatId = sourceSeatId,
-                TargetSeatId = targetSeatId,
-                CardInstanceId = cardInstanceId,
-                OtherCardInstanceId = followUpCardId,
-                DamageNatureOverride = natureOverride,
-                Continuation = continuation,
-                DamageAmount = damageAmount
-            });
+            operation: dodgeOperation);
     }
 
     private void ResolveDodgeResponse(PendingOperation operation, string optionId)
@@ -1783,13 +1888,6 @@ public sealed class GameEngine
         if (optionId.StartsWith("card:", StringComparison.Ordinal))
         {
             DiscardFromHand(operation.TargetSeatId, ParseCardOption(optionId));
-            avoidedDamage = true;
-        }
-        else if (string.Equals(optionId, "skill:auto_dodge", StringComparison.Ordinal))
-        {
-            State.Players[operation.TargetSeatId].Marks["skill:auto_dodge:round"] = State.RoundNumber;
-            CommitMutation();
-            Emit(RuleEventKind.SkillTriggered, operation.TargetSeatId, new[] { operation.TargetSeatId }, new TextRuleEventPayload("skill.auto_dodge"));
             avoidedDamage = true;
         }
         else if (string.Equals(optionId, "equipment:eight_diagram", StringComparison.Ordinal))
@@ -2160,11 +2258,26 @@ public sealed class GameEngine
         {
             throw new InvalidOperationException("Selected skill is not currently usable.");
         }
-
-        if (skillId == "limit_break")
+        SkillEffectResult effectIntent = _effects.GetSkillEffect(skill.EffectId).Resolve(new SkillContext(
+            State,
+            source,
+            null,
+            null,
+            Array.Empty<int>(),
+            Array.Empty<string>()));
+        if (!effectIntent.WasApplied)
         {
-            source.Marks["skill:limit_break:used"] = 1;
+            throw new InvalidOperationException(effectIntent.FailureKey);
+        }
+
+        if (skill.EffectId == "skill.limit_break")
+        {
+            source.Marks[$"skill:{skill.SkillId}:used"] = 1;
             source.Marks["limit_break_damage"] = 2;
+            foreach (string subSkillId in skill.SubSkillIds ?? Array.Empty<string>())
+            {
+                source.TemporarySkillIds.Add(subSkillId);
+            }
             DrawCards(source, 2);
             CommitMutation();
             Emit(RuleEventKind.SkillTriggered, sourceSeatId, new[] { sourceSeatId }, new TextRuleEventPayload("skill.limit_break"));
@@ -2172,7 +2285,7 @@ public sealed class GameEngine
         }
 
         List<ChoiceOption> cards = source.Hand
-            .Where(cardId => skillId != "blade_conversion" || _content.Cards[State.Cards[cardId].DefinitionId].Category != CardCategory.Basic)
+            .Where(cardId => skill.EffectId != "skill.blade_conversion" || _content.Cards[State.Cards[cardId].DefinitionId].Category != CardCategory.Basic)
             .Select(cardId => new ChoiceOption($"card:{cardId}", ChoiceOptionKind.Card, "skill.cost.card", cardId, AiValue: -1))
             .ToList();
         if (cards.Count == 0)
@@ -2199,7 +2312,8 @@ public sealed class GameEngine
     private void ResolveSkillAction(PendingOperation operation, ChoiceResult result)
     {
         string cardId = ParseCardOption(result.SelectedOptionIds.Single());
-        if (operation.SkillId == "active_draw")
+        string effectId = _content.Skills[operation.SkillId].EffectId;
+        if (effectId == "skill.active_draw")
         {
             DiscardFromHand(operation.SourceSeatId, cardId);
             DrawCards(State.Players[operation.SourceSeatId], 2);
@@ -2210,8 +2324,8 @@ public sealed class GameEngine
 
         List<ChoiceOption> targets = State.Players.Values
             .Where(player => player.IsAlive && player.SeatId != operation.SourceSeatId)
-            .Where(player => operation.SkillId != "ally_supply" || _mode.GetAttitude(State, operation.SourceSeatId, player.SeatId) > 0)
-            .Where(player => operation.SkillId != "blade_conversion"
+            .Where(player => effectId != "skill.ally_supply" || _mode.GetAttitude(State, operation.SourceSeatId, player.SeatId) > 0)
+            .Where(player => effectId != "skill.blade_conversion"
                 || EffectiveDistance(operation.SourceSeatId, player.SeatId) <= AttackRange(State.Players[operation.SourceSeatId]))
             .OrderBy(player => player.SeatId)
             .Select(player => new ChoiceOption(
@@ -2219,7 +2333,7 @@ public sealed class GameEngine
                 ChoiceOptionKind.Player,
                 "target.player",
                 player.SeatId.ToString(),
-                AiValue: operation.SkillId == "ally_supply"
+                AiValue: effectId == "skill.ally_supply"
                     ? _mode.GetAttitude(State, operation.SourceSeatId, player.SeatId)
                     : -_mode.GetAttitude(State, operation.SourceSeatId, player.SeatId)))
             .ToList();
@@ -2241,15 +2355,16 @@ public sealed class GameEngine
     private void ResolveSkillTarget(PendingOperation operation, int targetSeatId)
     {
         PlayerState source = State.Players[operation.SourceSeatId];
-        switch (operation.SkillId)
+        string effectId = _content.Skills[operation.SkillId].EffectId;
+        switch (effectId)
         {
-            case "discard_strike":
+            case "skill.discard_strike":
                 DiscardFromHand(source.SeatId, operation.CardInstanceId);
                 MarkActiveSkillUsed(source, operation.SkillId);
                 EmitSkillTriggered(operation, targetSeatId);
                 Damage(source.SeatId, targetSeatId, 1, DamageNature.Physical, string.Empty);
                 break;
-            case "ally_supply":
+            case "skill.ally_supply":
                 if (!source.Hand.Remove(operation.CardInstanceId))
                 {
                     throw new InvalidOperationException("The ally supply card is no longer in hand.");
@@ -2263,7 +2378,7 @@ public sealed class GameEngine
                 DrawCards(target, 1);
                 EmitSkillTriggered(operation, targetSeatId);
                 break;
-            case "blade_conversion":
+            case "skill.blade_conversion":
                 if (source.SlashUsesThisTurn > 0 && !HasEquippedCard(source, "crossbow"))
                 {
                     throw new InvalidOperationException("The converted Slash exceeds the turn usage limit.");
@@ -2274,7 +2389,7 @@ public sealed class GameEngine
                 RequestDodge(source.SeatId, targetSeatId, operation.CardInstanceId);
                 break;
             default:
-                throw new InvalidOperationException($"Unsupported active skill target: {operation.SkillId}");
+                throw new InvalidOperationException($"Unsupported active skill effect: {effectId}");
         }
     }
 
@@ -2323,10 +2438,12 @@ public sealed class GameEngine
             CardInstanceId = delayedCardId,
             OtherCardInstanceId = judgementCard.InstanceId
         };
-        foreach (PlayerState observer in AlivePlayersInSeatOrder(player.SeatId).Where(candidate =>
-            HasSkill(candidate, "mirror_judgement")
-            && candidate.Hand.Count > 0
-            && candidate.Marks.GetValueOrDefault("skill:mirror_judgement:used") == 0))
+        foreach (PlayerState observer in OrderedSkillTriggers("skill.mirror_judgement", RuleEventKind.Judgement, RuleEventStage.Before)
+            .Select(candidate => State.Players[candidate.OwnerSeatId])
+            .DistinctBy(candidate => candidate.SeatId)
+            .Where(candidate => FindSkillIdByEffect(candidate, "skill.mirror_judgement") is string skillId
+                && candidate.Hand.Count > 0
+                && candidate.Marks.GetValueOrDefault($"skill:{skillId}:used") == 0))
         {
             operation.RemainingTargets.Enqueue(observer.SeatId);
         }
@@ -2342,6 +2459,8 @@ public sealed class GameEngine
         }
         int responderSeatId = operation.RemainingTargets.Dequeue();
         PlayerState responder = State.Players[responderSeatId];
+        operation.SkillId = FindSkillIdByEffect(responder, "skill.mirror_judgement")
+            ?? throw new InvalidOperationException("Judgement replacement skill is no longer available.");
         List<ChoiceOption> options = responder.Hand
             .OrderBy(cardId => cardId, StringComparer.Ordinal)
             .Select(cardId => new ChoiceOption($"card:{cardId}", ChoiceOptionKind.Card, "judgement.replace_card", cardId, AiValue: 1))
@@ -2371,9 +2490,12 @@ public sealed class GameEngine
             State.ProcessingArea.Add(replacementId);
             MoveCard(replacementId, CardZone.Processing, 0);
             operation.OtherCardInstanceId = replacementId;
-            responder.Marks["skill:mirror_judgement:used"] = 1;
+            responder.Marks[$"skill:{operation.SkillId}:used"] = 1;
             CommitMutation();
-            Emit(RuleEventKind.SkillTriggered, responderSeatId, new[] { operation.TargetSeatId }, new TextRuleEventPayload("skill.mirror_judgement"));
+            Emit(RuleEventKind.SkillTriggered, responderSeatId, new[] { operation.TargetSeatId }, new TextRuleEventPayload("skill.triggered", new Dictionary<string, string>
+            {
+                ["skillId"] = operation.SkillId
+            }));
             operation.RemainingTargets.Clear();
         }
         ContinueJudgementReplacement(operation);
@@ -2392,21 +2514,28 @@ public sealed class GameEngine
             _ => false
         };
         Emit(RuleEventKind.Judgement, player.SeatId, new[] { player.SeatId }, new ValueRuleEventPayload(hit ? 1 : 0, delayed.CardId));
-        foreach (PlayerState observer in State.Players.Values.Where(candidate => candidate.IsAlive
-            && HasSkill(candidate, "judgement_draw")
-            && candidate.Marks.GetValueOrDefault("skill:judgement_draw:used") == 0))
+        foreach (SkillTriggerCandidate candidate in OrderedSkillTriggers("skill.judgement_draw", RuleEventKind.Judgement, RuleEventStage.After))
         {
-            observer.Marks["skill:judgement_draw:used"] = 1;
+            PlayerState observer = State.Players[candidate.OwnerSeatId];
+            if (observer.Marks.GetValueOrDefault($"skill:{candidate.Skill.SkillId}:used") > 0)
+            {
+                continue;
+            }
+            observer.Marks[$"skill:{candidate.Skill.SkillId}:used"] = 1;
             DrawCards(observer, 1);
+            Emit(RuleEventKind.SkillTriggered, observer.SeatId, new[] { player.SeatId }, new TextRuleEventPayload("skill.triggered", new Dictionary<string, string>
+            {
+                ["skillId"] = candidate.Skill.SkillId
+            }));
         }
         MoveProcessingCardToDiscard(judgementCard.InstanceId);
         if (hit && delayed.EffectId == "card.indulgence")
         {
-            player.TemporaryFlags.Add("skip_play");
+            SchedulePhaseDirective(player.SeatId, PhaseDirectiveKind.Skip, GamePhase.Play, sourceId: delayed.CardId);
         }
         else if (hit && delayed.EffectId == "card.supply_shortage")
         {
-            player.TemporaryFlags.Add("skip_draw");
+            SchedulePhaseDirective(player.SeatId, PhaseDirectiveKind.Skip, GamePhase.Draw, sourceId: delayed.CardId);
         }
         else if (hit && delayed.EffectId == "card.lightning")
         {
@@ -2430,27 +2559,120 @@ public sealed class GameEngine
     private void ChangePhase(GamePhase phase)
     {
         PlayerState current = State.Players[State.CurrentSeatId];
-        if (phase == GamePhase.Draw && current.TemporaryFlags.Remove("skip_draw"))
+        ClearSkillUsageMarks(SkillUsageScope.OncePerPhase, new[] { current });
+        if (State.ExtraPhaseResume != GamePhase.NotStarted)
         {
-            State.Phase = GamePhase.Play;
-            CommitMutation();
-            Emit(RuleEventKind.PhaseSkipped, current.SeatId, new[] { current.SeatId }, new PhaseRuleEventPayload(GamePhase.Draw, true));
-            EmitPhaseChanged(GamePhase.Play);
-            return;
+            phase = State.ExtraPhaseResume;
+            State.ExtraPhaseResume = GamePhase.NotStarted;
         }
-        if (phase == GamePhase.Play && current.TemporaryFlags.Remove("skip_play"))
+
+        PhaseDirective? directive = State.PhaseDirectives
+            .Where(value => value.SeatId == current.SeatId && value.Phase == phase)
+            .OrderBy(value => value.Sequence)
+            .FirstOrDefault();
+        if (directive is not null)
         {
-            State.Phase = GamePhase.Discard;
-            CommitMutation();
-            Emit(RuleEventKind.PhaseSkipped, current.SeatId, new[] { current.SeatId }, new PhaseRuleEventPayload(GamePhase.Play, true));
-            EmitPhaseChanged(GamePhase.Discard);
-            return;
+            State.PhaseDirectives.Remove(directive);
+            if (directive.Kind == PhaseDirectiveKind.Skip)
+            {
+                CommitMutation();
+                Emit(RuleEventKind.PhaseSkipped, current.SeatId, new[] { current.SeatId }, new PhaseRuleEventPayload(
+                    directive.Phase,
+                    true,
+                    NextPhaseAfter(directive.Phase),
+                    SourceId: directive.SourceId));
+                if (directive.Phase == GamePhase.End)
+                {
+                    AdvanceTurn();
+                }
+                else
+                {
+                    ChangePhase(NextPhaseAfter(directive.Phase));
+                }
+                return;
+            }
+            if (directive.Kind == PhaseDirectiveKind.Replace)
+            {
+                CommitMutation();
+                Emit(RuleEventKind.PhaseSkipped, current.SeatId, new[] { current.SeatId }, new PhaseRuleEventPayload(
+                    directive.Phase,
+                    true,
+                    directive.ReplacementPhase,
+                    SourceId: directive.SourceId));
+                phase = directive.ReplacementPhase;
+            }
+            else
+            {
+                State.ExtraPhaseResume = phase;
+                phase = directive.ReplacementPhase;
+                State.Phase = phase;
+                CommitMutation();
+                EmitPhaseChanged(phase, isExtra: true, sourceId: directive.SourceId);
+                return;
+            }
         }
 
         State.Phase = phase;
         CommitMutation();
         EmitPhaseChanged(phase);
     }
+
+    public PhaseDirective SchedulePhaseDirective(
+        int seatId,
+        PhaseDirectiveKind kind,
+        GamePhase phase,
+        GamePhase replacementPhase = GamePhase.NotStarted,
+        string sourceId = "")
+    {
+        if (State.Status != MatchStatus.Running || !State.Players.ContainsKey(seatId))
+        {
+            throw new InvalidOperationException("Phase directives require a running match and a valid seat.");
+        }
+        if (phase is GamePhase.NotStarted or GamePhase.Finished)
+        {
+            throw new ArgumentOutOfRangeException(nameof(phase), "A playable phase is required.");
+        }
+        if (kind is PhaseDirectiveKind.Replace or PhaseDirectiveKind.Extra
+            && replacementPhase is GamePhase.NotStarted or GamePhase.Finished)
+        {
+            throw new ArgumentOutOfRangeException(nameof(replacementPhase), "Replace and extra directives require a playable replacement phase.");
+        }
+
+        PhaseDirective directive = new(
+            ++State.NextPhaseDirectiveSequence,
+            seatId,
+            kind,
+            phase,
+            replacementPhase,
+            sourceId);
+        State.PhaseDirectives.Add(directive);
+        CommitMutation();
+        RuleEvent scheduledEvent = CreateRuleEvent(RuleEventKind.PhaseDirectiveScheduled, seatId, new[] { seatId }, new PhaseRuleEventPayload(
+            phase,
+            ReplacementPhase: replacementPhase,
+            IsExtra: kind == PhaseDirectiveKind.Extra,
+            SourceId: sourceId));
+        if (_resolutionStack.PendingChoice is not null)
+        {
+            _resolutionStack.EnqueueAfterCurrent(new ResolutionFrame(scheduledEvent));
+        }
+        else
+        {
+            DispatchRuleEvent(scheduledEvent);
+        }
+        return directive;
+    }
+
+    private static GamePhase NextPhaseAfter(GamePhase phase) => phase switch
+    {
+        GamePhase.Preparation => GamePhase.Judgement,
+        GamePhase.Judgement => GamePhase.Draw,
+        GamePhase.Draw => GamePhase.Play,
+        GamePhase.Play => GamePhase.Discard,
+        GamePhase.Discard => GamePhase.End,
+        GamePhase.End => GamePhase.Finished,
+        _ => throw new InvalidOperationException($"Phase {phase} has no turn successor.")
+    };
 
     private void AdvanceTurn()
     {
@@ -2460,14 +2682,10 @@ public sealed class GameEngine
         endingPlayer.SlashUsesThisTurn = 0;
         endingPlayer.WineUsesThisTurn = 0;
         endingPlayer.Marks.Remove("wine_damage");
-        foreach (string markId in endingPlayer.Marks.Keys
-            .Where(markId => markId.StartsWith("skill:", StringComparison.Ordinal)
-                && !string.Equals(markId, "skill:limit_break:used", StringComparison.Ordinal))
-            .ToArray())
-        {
-            endingPlayer.Marks.Remove(markId);
-        }
+        endingPlayer.Marks.Remove("limit_break_damage");
+        ClearSkillUsageMarks(SkillUsageScope.OncePerTurn, State.Players.Values);
         endingPlayer.TemporaryFlags.Clear();
+        endingPlayer.TemporarySkillIds.Clear();
 
         VictoryResult? victory = _mode.CheckVictory(State);
         if (victory is not null)
@@ -2482,14 +2700,14 @@ public sealed class GameEngine
             if (State.CurrentSeatIndex == 0)
             {
                 State.RoundNumber++;
+                ClearSkillUsageMarks(SkillUsageScope.OncePerRound, State.Players.Values);
             }
         }
         while (!State.Players[State.CurrentSeatId].IsAlive);
 
-        State.Phase = GamePhase.Preparation;
         CommitMutation();
         Emit(RuleEventKind.TurnStarted, State.CurrentSeatId, new[] { State.CurrentSeatId }, new ValueRuleEventPayload(State.RoundNumber));
-        EmitPhaseChanged(GamePhase.Preparation);
+        ChangePhase(GamePhase.Preparation);
     }
 
     private void Damage(
@@ -2504,26 +2722,12 @@ public sealed class GameEngine
         {
             return;
         }
-        if (sourceSeatId > 0 && State.Players.TryGetValue(sourceSeatId, out PlayerState? source))
-        {
-            if (HasSkill(source, "first_damage_boost")
-                && source.Marks.GetValueOrDefault("skill:first_damage_boost:used") == 0)
-            {
-                amount++;
-                source.Marks["skill:first_damage_boost:used"] = 1;
-            }
-            int limitedBonus = source.Marks.GetValueOrDefault("limit_break_damage");
-            if (limitedBonus > 0)
-            {
-                amount += limitedBonus;
-                source.Marks.Remove("limit_break_damage");
-            }
-        }
+        amount = ResolveDamageBeforeTriggers(sourceSeatId, targetSeatId, amount);
         PlayerState target = State.Players[targetSeatId];
         int baseDamageAmount = amount;
         amount = AdjustDamageForArmor(sourceSeatId, target, amount, nature, sourceCardId);
         target.Health -= amount;
-        List<PlayerState> damagedPlayers = new() { target };
+        List<(PlayerState Player, int Amount)> damagedPlayers = new() { (target, amount) };
         CommitMutation();
         Emit(RuleEventKind.Damage, sourceSeatId, new[] { targetSeatId }, new DamageRuleEventPayload(amount, nature, sourceCardId));
 
@@ -2535,39 +2739,129 @@ public sealed class GameEngine
                 chained.IsChained = false;
                 int chainedAmount = AdjustDamageForArmor(sourceSeatId, chained, baseDamageAmount, nature, sourceCardId);
                 chained.Health -= chainedAmount;
-                damagedPlayers.Add(chained);
+                damagedPlayers.Add((chained, chainedAmount));
                 Emit(RuleEventKind.Damage, sourceSeatId, new[] { chained.SeatId }, new DamageRuleEventPayload(chainedAmount, nature, sourceCardId, true));
             }
             CommitMutation();
         }
         CheckBossPhaseTransition();
-        foreach (PlayerState damaged in damagedPlayers)
+        foreach ((PlayerState damaged, int damageTaken) in damagedPlayers)
         {
-            if (damaged.IsAlive && HasSkill(damaged, "pain_draw"))
-            {
-                DrawCards(damaged, amount);
-                Emit(RuleEventKind.SkillTriggered, damaged.SeatId, new[] { damaged.SeatId }, new TextRuleEventPayload("skill.pain_draw"));
-            }
+            ResolveDamageAfterTriggers(sourceSeatId, damaged, damageTaken, nature);
         }
-        if (nature != DamageNature.Physical)
-        {
-            PlayerState? resonator = State.Players.Values
-                .Where(player => player.IsAlive
-                    && HasSkill(player, "elemental_resonance")
-                    && player.Marks.GetValueOrDefault("skill:elemental_resonance:used") == 0)
-                .OrderBy(player => SeatDistance(targetSeatId, player.SeatId))
-                .ThenBy(player => player.SeatId)
-                .FirstOrDefault();
-            if (resonator is not null)
-            {
-                target.IsChained = !target.IsChained;
-                resonator.Marks["skill:elemental_resonance:used"] = 1;
-                CommitMutation();
-                Emit(RuleEventKind.SkillTriggered, resonator.SeatId, new[] { targetSeatId }, new TextRuleEventPayload("skill.elemental_resonance"));
-            }
-        }
-        BeginDyingSequence(sourceSeatId, damagedPlayers.Where(player => player.Health <= 0), continuation);
+        BeginDyingSequence(sourceSeatId, damagedPlayers.Select(entry => entry.Player).Where(player => player.Health <= 0), continuation);
     }
+
+    private int ResolveDamageBeforeTriggers(int sourceSeatId, int targetSeatId, int amount)
+    {
+        if (sourceSeatId <= 0 || !State.Players.TryGetValue(sourceSeatId, out PlayerState? source))
+        {
+            return amount;
+        }
+        foreach (SkillTriggerCandidate candidate in TriggerScheduler.Match(
+            State,
+            _content.Skills.Values,
+            RuleEventKind.Damage,
+            RuleEventStage.Before))
+        {
+            if (!TriggerScopeApplies(candidate, sourceSeatId, targetSeatId)
+                || !_effects.GetSkillEffect(candidate.Skill.EffectId).CanTrigger(new SkillContext(
+                    State,
+                    State.Players[candidate.OwnerSeatId],
+                    null,
+                    null,
+                    new[] { targetSeatId },
+                    Array.Empty<string>())))
+            {
+                continue;
+            }
+            switch (candidate.Skill.EffectId)
+            {
+                case "skill.first_damage_boost" when candidate.OwnerSeatId == sourceSeatId:
+                    string boostMark = $"skill:{candidate.Skill.SkillId}:used";
+                    if (source.Marks.GetValueOrDefault(boostMark) == 0)
+                    {
+                        amount++;
+                        source.Marks[boostMark] = 1;
+                        CommitMutation();
+                        EmitSkillTrigger(candidate, new[] { targetSeatId });
+                    }
+                    break;
+                case "skill.limit_break" when candidate.OwnerSeatId == sourceSeatId
+                    && (candidate.Skill.Tags & SkillTags.Temporary) != 0:
+                    int limitedBonus = source.Marks.GetValueOrDefault("limit_break_damage");
+                    if (limitedBonus > 0)
+                    {
+                        amount += limitedBonus;
+                        source.Marks.Remove("limit_break_damage");
+                        source.TemporarySkillIds.Remove(candidate.Skill.SkillId);
+                        CommitMutation();
+                        EmitSkillTrigger(candidate, new[] { targetSeatId });
+                    }
+                    break;
+            }
+        }
+        return amount;
+    }
+
+    private void ResolveDamageAfterTriggers(int sourceSeatId, PlayerState damaged, int damageTaken, DamageNature nature)
+    {
+        foreach (SkillTriggerCandidate candidate in TriggerScheduler.Match(
+            State,
+            _content.Skills.Values,
+            RuleEventKind.Damage,
+            RuleEventStage.After))
+        {
+            if (!TriggerScopeApplies(candidate, sourceSeatId, damaged.SeatId))
+            {
+                continue;
+            }
+            PlayerState owner = State.Players[candidate.OwnerSeatId];
+            if (!_effects.GetSkillEffect(candidate.Skill.EffectId).CanTrigger(new SkillContext(
+                State,
+                owner,
+                null,
+                null,
+                new[] { damaged.SeatId },
+                Array.Empty<string>())))
+            {
+                continue;
+            }
+            switch (candidate.Skill.EffectId)
+            {
+                case "skill.pain_draw" when candidate.OwnerSeatId == damaged.SeatId && damaged.IsAlive:
+                    DrawCards(damaged, damageTaken);
+                    EmitSkillTrigger(candidate, new[] { damaged.SeatId });
+                    break;
+                case "skill.elemental_resonance" when nature != DamageNature.Physical:
+                    string markId = $"skill:{candidate.Skill.SkillId}:used";
+                    if (owner.Marks.GetValueOrDefault(markId) > 0)
+                    {
+                        break;
+                    }
+                    damaged.IsChained = !damaged.IsChained;
+                    owner.Marks[markId] = 1;
+                    CommitMutation();
+                    EmitSkillTrigger(candidate, new[] { damaged.SeatId });
+                    break;
+            }
+        }
+    }
+
+    private static bool TriggerScopeApplies(SkillTriggerCandidate candidate, int sourceSeatId, int targetSeatId) =>
+        candidate.Trigger.Scope switch
+        {
+            "source" => candidate.OwnerSeatId == sourceSeatId,
+            "target" or "owner" => candidate.OwnerSeatId == targetSeatId,
+            "global" => true,
+            _ => false
+        };
+
+    private void EmitSkillTrigger(SkillTriggerCandidate candidate, IReadOnlyList<int> targetSeatIds) =>
+        Emit(RuleEventKind.SkillTriggered, candidate.OwnerSeatId, targetSeatIds, new TextRuleEventPayload("skill.triggered", new Dictionary<string, string>
+        {
+            ["skillId"] = candidate.Skill.SkillId
+        }));
 
     private int AdjustDamageForArmor(
         int sourceSeatId,
@@ -2856,7 +3150,17 @@ public sealed class GameEngine
             IsPrivate: true);
         State.PendingChoice = choice;
         _pendingOperation = operation ?? new PendingOperation { Kind = operationKind, SourceSeatId = actingSeatId };
-        Emit(RuleEventKind.ChoiceRequested, actingSeatId, new[] { actingSeatId }, new TextRuleEventPayload(promptKey));
+        RuleEvent ruleEvent = CreateRuleEvent(
+            RuleEventKind.ChoiceRequested,
+            actingSeatId,
+            new[] { actingSeatId },
+            new TextRuleEventPayload(promptKey));
+        ResolutionFrame choiceFrame = new(ruleEvent, context => context.SubmittedChoice is null
+            ? ResolutionDecision.Wait(choice)
+            : ResolutionDecision.Continue);
+        _resolutionStack.Enqueue(choiceFrame);
+        _resolutionStack.ResetStepBudget();
+        DrainResolutionStack(stopWhenWaiting: true);
     }
 
     private void DrawCards(PlayerState player, int count)
@@ -2991,14 +3295,18 @@ public sealed class GameEngine
         MoveCard(cardId, CardZone.DiscardPile, 0);
         CommitMutation();
         Emit(RuleEventKind.CardsDiscarded, seatId, new[] { seatId }, new CardMoveRuleEventPayload(cardId, CardZone.Hand, CardZone.DiscardPile, seatId));
+        string? offTurnSkillId = FindSkillIdByEffect(player, "skill.off_turn_loss_draw");
         if (player.IsAlive
             && State.CurrentSeatId != seatId
-            && HasSkill(player, "off_turn_loss_draw")
-            && player.Marks.GetValueOrDefault("skill:off_turn_loss_draw:used") == 0)
+            && offTurnSkillId is not null
+            && player.Marks.GetValueOrDefault($"skill:{offTurnSkillId}:used") == 0)
         {
-            player.Marks["skill:off_turn_loss_draw:used"] = 1;
+            player.Marks[$"skill:{offTurnSkillId}:used"] = 1;
             DrawCards(player, 1);
-            Emit(RuleEventKind.SkillTriggered, seatId, new[] { seatId }, new TextRuleEventPayload("skill.off_turn_loss_draw"));
+            Emit(RuleEventKind.SkillTriggered, seatId, new[] { seatId }, new TextRuleEventPayload("skill.triggered", new Dictionary<string, string>
+            {
+                ["skillId"] = offTurnSkillId
+            }));
         }
     }
 
@@ -3078,25 +3386,58 @@ public sealed class GameEngine
         card.IsFaceUp = zone is CardZone.Equipment or CardZone.Judgement or CardZone.Processing or CardZone.DiscardPile;
     }
 
-    private void EmitPhaseChanged(GamePhase phase) =>
-        Emit(RuleEventKind.PhaseChanged, State.CurrentSeatId, new[] { State.CurrentSeatId }, new PhaseRuleEventPayload(phase));
+    private void EmitPhaseChanged(GamePhase phase, bool isExtra = false, string sourceId = "") =>
+        Emit(RuleEventKind.PhaseChanged, State.CurrentSeatId, new[] { State.CurrentSeatId }, new PhaseRuleEventPayload(
+            phase,
+            ReplacementPhase: GamePhase.NotStarted,
+            IsExtra: isExtra,
+            SourceId: sourceId));
 
-    private void Emit(RuleEventKind kind, int sourceSeatId, IEnumerable<int> targetSeatIds, RuleEventPayload payload)
+    private RuleEvent Emit(RuleEventKind kind, int sourceSeatId, IEnumerable<int> targetSeatIds, RuleEventPayload payload, string parentEventId = "")
     {
-        RuleEvent ruleEvent = new(
+        RuleEvent ruleEvent = CreateRuleEvent(kind, sourceSeatId, targetSeatIds, payload, parentEventId);
+        DispatchRuleEvent(ruleEvent);
+        return ruleEvent;
+    }
+
+    private void DispatchRuleEvent(RuleEvent ruleEvent)
+    {
+        _resolutionStack.Enqueue(new ResolutionFrame(ruleEvent));
+        _resolutionStack.ResetStepBudget();
+        DrainResolutionStack(stopWhenWaiting: false);
+    }
+
+    private RuleEvent CreateRuleEvent(
+        RuleEventKind kind,
+        int sourceSeatId,
+        IEnumerable<int> targetSeatIds,
+        RuleEventPayload payload,
+        string parentEventId = "") => new(
             $"event-{++_eventSequence:D8}",
             _eventSequence,
-            string.Empty,
+            parentEventId,
             kind,
             RuleEventStage.Created,
             sourceSeatId,
             targetSeatIds.ToArray(),
             payload);
-        _resolutionStack.Enqueue(new ResolutionFrame(ruleEvent));
-        _resolutionStack.ResetStepBudget();
+
+    private void ResumeChoiceFrame(ChoiceResult result)
+    {
+        if (!_resolutionStack.HasWork || _resolutionStack.PendingChoice is null)
+        {
+            throw new InvalidOperationException("The pending choice has no suspended resolution frame.");
+        }
+        DrainResolutionStack(stopWhenWaiting: false, result);
+    }
+
+    private void DrainResolutionStack(bool stopWhenWaiting, ChoiceResult? submittedChoice = null)
+    {
+        bool firstStep = true;
         while (_resolutionStack.HasWork)
         {
-            ResolutionStep step = _resolutionStack.Advance();
+            ResolutionStep step = _resolutionStack.Advance(firstStep ? submittedChoice : null);
+            firstStep = false;
             if (step.Progress == ResolutionProgress.Faulted)
             {
                 throw new InvalidOperationException(step.Error);
@@ -3106,6 +3447,19 @@ public sealed class GameEngine
                 _stepEvents.Add(step.Event);
                 Journal.Append(JournalEntryKind.RuleEvent, State.ComputeCanonicalHash(), step.Event);
             }
+            if (step.Progress == ResolutionProgress.WaitingForChoice)
+            {
+                if (stopWhenWaiting)
+                {
+                    return;
+                }
+                throw new InvalidOperationException("A rule event unexpectedly suspended while draining an automatic resolution.");
+            }
+        }
+
+        if (stopWhenWaiting)
+        {
+            throw new InvalidOperationException("A choice resolution frame completed without suspending.");
         }
     }
 
@@ -3265,19 +3619,68 @@ public sealed class GameEngine
         IsSlash(State.Cards[cardInstanceId])
         && HasEquippedCard(State.Players[sourceSeatId], "qinggang_sword");
 
-    private bool HasSkill(PlayerState player, string skillId) => player.SkillIds.Contains(skillId);
+    private bool HasSkillEffect(PlayerState player, string effectId) => FindSkillIdByEffect(player, effectId) is not null;
+
+    private string? FindSkillIdByEffect(PlayerState player, string effectId) => player.SkillIds
+        .Concat(player.TemporarySkillIds)
+        .FirstOrDefault(skillId => _content.Skills.TryGetValue(skillId, out SkillDefinitionV2? skill)
+            && string.Equals(skill.EffectId, effectId, StringComparison.Ordinal));
+
+    private IReadOnlyList<SkillTriggerCandidate> OrderedSkillTriggers(
+        string effectId,
+        RuleEventKind eventKind,
+        RuleEventStage eventStage) => TriggerScheduler
+        .Match(State, _content.Skills.Values, eventKind, eventStage)
+        .Where(candidate => string.Equals(candidate.Skill.EffectId, effectId, StringComparison.Ordinal))
+        .ToArray();
+
+    private void ClearSkillUsageMarks(SkillUsageScope usageScope, IEnumerable<PlayerState> players)
+    {
+        foreach (PlayerState player in players)
+        {
+            foreach (string skillId in player.SkillIds.Concat(player.TemporarySkillIds).Distinct(StringComparer.Ordinal))
+            {
+                if (_content.Skills.TryGetValue(skillId, out SkillDefinitionV2? skill)
+                    && skill.UsageScope == usageScope)
+                {
+                    player.Marks.Remove($"skill:{skillId}:used");
+                }
+            }
+        }
+    }
+
+    private static void InitializeSkillMarks(PlayerState player, SkillDefinitionV2 skill)
+    {
+        foreach (SkillMarkDefinition mark in skill.Marks ?? Array.Empty<SkillMarkDefinition>())
+        {
+            if (mark.InitialValue != 0)
+            {
+                player.Marks[mark.MarkId] = Math.Clamp(mark.InitialValue, 0, mark.MaximumValue);
+            }
+        }
+    }
 
     private bool CanUseActiveSkill(PlayerState player, SkillDefinitionV2 skill)
     {
+        if (!_effects.GetSkillEffect(skill.EffectId).CanTrigger(new SkillContext(
+            State,
+            player,
+            null,
+            null,
+            Array.Empty<int>(),
+            Array.Empty<string>())))
+        {
+            return false;
+        }
         if (player.Marks.GetValueOrDefault($"skill:{skill.SkillId}:used") > 0)
         {
             return false;
         }
-        if (skill.SkillId == "limit_break")
+        if (skill.EffectId == "skill.limit_break")
         {
-            return player.Marks.GetValueOrDefault("skill:limit_break:used") == 0;
+            return player.Marks.GetValueOrDefault($"skill:{skill.SkillId}:used") == 0;
         }
-        if (skill.SkillId == "blade_conversion")
+        if (skill.EffectId == "skill.blade_conversion")
         {
             return (player.SlashUsesThisTurn == 0 || HasEquippedCard(player, "crossbow"))
                 && player.Hand.Any(cardId => _content.Cards[State.Cards[cardId].DefinitionId].Category != CardCategory.Basic)
@@ -3285,17 +3688,35 @@ public sealed class GameEngine
                     && target.SeatId != player.SeatId
                     && EffectiveDistance(player.SeatId, target.SeatId) <= AttackRange(player));
         }
-        if (skill.SkillId == "ally_supply")
+        if (skill.EffectId == "skill.ally_supply")
         {
             return player.Hand.Count > 0 && State.Players.Values.Any(target => target.IsAlive
                 && target.SeatId != player.SeatId
                 && _mode.GetAttitude(State, player.SeatId, target.SeatId) > 0);
         }
-        if (skill.SkillId == "discard_strike")
+        if (skill.EffectId == "skill.discard_strike")
         {
             return player.Hand.Count > 0 && State.Players.Values.Any(target => target.IsAlive && target.SeatId != player.SeatId);
         }
         return player.Hand.Count > 0;
+    }
+
+    private void EnsureCardEffectContext(
+        PlayerState source,
+        CardState card,
+        IReadOnlyList<PlayerState> targets,
+        CardDefinition definition)
+    {
+        CardEffectResult result = _effects.GetCardEffect(definition.EffectId).Resolve(new CardEffectContext(
+            State,
+            source,
+            card,
+            targets,
+            null));
+        if (!result.WasApplied)
+        {
+            throw new InvalidOperationException(result.FailureKey);
+        }
     }
 
     private void MarkActiveSkillUsed(PlayerState player, string skillId)

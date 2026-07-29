@@ -7,6 +7,7 @@ using CiyuanSha.Gameplay.Cards;
 using CiyuanSha.Gameplay.Characters;
 using CiyuanSha.Gameplay.Skills;
 using CiyuanSha.GameCore.Choices;
+using CiyuanSha.GameCore.Content;
 using CiyuanSha.GameCore.Engine;
 using CiyuanSha.GameCore.Modes;
 using CiyuanSha.Networking;
@@ -18,8 +19,8 @@ using CoreViewerRole = CiyuanSha.GameCore.Domain.ViewerRole;
 namespace CiyuanSha.Gameplay.Core;
 
 /// <summary>
-/// Main game flow controller and host-authoritative rules manager.
-/// Recommended as a Godot autoload.
+/// Godot scene, network and presentation adapter. Protocol-V2 rules are owned
+/// exclusively by <see cref="GameCoreRuntime"/>.
 /// </summary>
 public partial class GameManager : Node
 {
@@ -41,6 +42,9 @@ public partial class GameManager : Node
 
 	/// <summary>The host-owned deterministic rules runtime used by protocol V2.</summary>
 	public GameCoreRuntime? CoreRuntime { get; private set; }
+
+	/// <summary>True while all rule state comes from GameCore views.</summary>
+	public bool IsCoreMatchActive { get; private set; }
 
 	public TurnPhase CurrentPhase { get; private set; } = TurnPhase.TurnStart;
 
@@ -217,6 +221,8 @@ public partial class GameManager : Node
 		}
 
 		EngineStepResult result = CoreRuntime.Start(config);
+		IsCoreMatchActive = true;
+		ApplyCoreViewToPresentation(BuildLocalCoreView());
 		OnCoreEngineAdvanced?.Invoke(result);
 		RequestStateSync();
 		return result;
@@ -230,12 +236,23 @@ public partial class GameManager : Node
 		}
 
 		EngineStepResult step = CoreRuntime.SubmitChoice(seatId, reconnectToken, result);
+		if (step.Progress != EngineProgress.Rejected)
+		{
+			ApplyCoreViewToPresentation(BuildLocalCoreView());
+		}
 		OnCoreEngineAdvanced?.Invoke(step);
 		if (step.Progress != EngineProgress.Rejected)
 		{
 			RequestStateSync();
 		}
 		return step;
+	}
+
+	public void ApplyCoreViewSnapshot(CoreGameView view)
+	{
+		ArgumentNullException.ThrowIfNull(view);
+		IsCoreMatchActive = true;
+		ApplyCoreViewToPresentation(view);
 	}
 
 	public override void _ExitTree()
@@ -248,7 +265,7 @@ public partial class GameManager : Node
 
 	public override void _Process(double delta)
 	{
-		if (!ShouldProcessGameFlow() || !IsMatchRunning)
+		if (IsCoreMatchActive || !ShouldProcessGameFlow() || !IsMatchRunning)
 		{
 			return;
 		}
@@ -358,6 +375,28 @@ public partial class GameManager : Node
 		RequestStateSync();
 	}
 
+	/// <summary>
+	/// Starts only the scene-side representation of a V2 match. It intentionally
+	/// does not create decks, deal cards, assign roles, or advance phases.
+	/// </summary>
+	public void BeginCorePresentationMatch(IEnumerable<int> turnOrder, int startingPeerId)
+	{
+		_turnOrder.Clear();
+		_turnOrder.AddRange(turnOrder.Where(peerId => peerId > 0).Distinct());
+		CurrentTurnPeerId = Math.Max(1, startingPeerId);
+		_currentTurnIndex = Math.Max(0, _turnOrder.IndexOf(CurrentTurnPeerId));
+		IsCoreMatchActive = true;
+		IsMatchRunning = CoreRuntime?.Engine?.State.Status == CiyuanSha.GameCore.Domain.MatchStatus.Running
+			|| LanMultiplayerManager.Instance?.LastMatchStateSnapshot?.CoreView?.Status == CiyuanSha.GameCore.Domain.MatchStatus.Running;
+		WinnerPeerId = 0;
+		ResultMessage = string.Empty;
+		ResetLegacyWaitingState();
+		ApplyCoreViewToPresentation(BuildLocalCoreView());
+		OnMatchRunningChanged?.Invoke(IsMatchRunning);
+		OnStateChanged?.Invoke();
+		RequestStateSync();
+	}
+
 	private void AssignDefaultFactions()
 	{
 		foreach (PlayerCharacter character in _peerCharacters.Values)
@@ -371,6 +410,7 @@ public partial class GameManager : Node
 
 	public void EndMatch(int winnerPeerId = 0, string resultMessage = "")
 	{
+		IsCoreMatchActive = false;
 		IsMatchRunning = false;
 		_isWaitingForPlayInput = false;
 		_isWaitingForDiscardInput = false;
@@ -429,6 +469,10 @@ public partial class GameManager : Node
 		character.OnStatsChanged += HandleCharacterStatsChanged;
 		character.OnDefeated += HandleCharacterDefeated;
 		character.OnHandCardRemoved += HandleHandCardRemoved;
+		if (IsCoreMatchActive)
+		{
+			ApplyCoreViewToPresentation(BuildLocalCoreView());
+		}
 		RequestStateSync();
 	}
 
@@ -1027,16 +1071,360 @@ public partial class GameManager : Node
 		_pendingDyingResponseIndex = 0;
 	}
 
+	private CoreGameView? BuildLocalCoreView()
+	{
+		if (LanMultiplayerManager.Instance is not LanMultiplayerManager network)
+		{
+			return CoreRuntime?.Engine is null ? null : CoreRuntime.BuildView(CoreViewerContext.Spectator);
+		}
+		if (network.JoinAsSpectator)
+		{
+			return CoreRuntime?.Engine is null
+				? network.LastMatchStateSnapshot?.CoreView
+				: CoreRuntime.BuildView(CoreViewerContext.Spectator);
+		}
+		int localSeatId = ResolveSeatId(network.LocalPeerId);
+		return CoreRuntime?.Engine is null
+			? network.LastMatchStateSnapshot?.CoreView
+			: CoreRuntime.BuildView(CoreViewerContext.ForPlayer(Math.Max(1, localSeatId)));
+	}
+
+	private void ApplyCoreViewToPresentation(CoreGameView? view)
+	{
+		if (view is null)
+		{
+			return;
+		}
+
+		IsMatchRunning = view.Status == CiyuanSha.GameCore.Domain.MatchStatus.Running;
+		ResultMessage = view.ResultMessage;
+		WinnerPeerId = view.WinnerSeatIds.Count == 1 ? ResolvePeerId(view.WinnerSeatIds[0]) : 0;
+		CurrentTurnPeerId = ResolvePeerId(view.CurrentSeatId);
+		CurrentPhase = ToPresentationPhase(view.Phase);
+		SetPublicPileCounts(view.DrawPileCount, view.DiscardPileCount);
+		_turnOrder.Clear();
+		_turnOrder.AddRange(view.Players.OrderBy(player => player.SeatId).Select(player => ResolvePeerId(player.SeatId)));
+		_currentTurnIndex = Math.Max(0, _turnOrder.IndexOf(CurrentTurnPeerId));
+		ResetLegacyWaitingState();
+
+		int viewerPeerId = LanMultiplayerManager.Instance?.JoinAsSpectator == true
+			? 0
+			: LanMultiplayerManager.Instance?.LocalPeerId ?? -1;
+		foreach (NetworkCharacterState state in BuildCoreCharacterStates(view, viewerPeerId))
+		{
+			if (_peerCharacters.TryGetValue(state.PeerId, out PlayerCharacter? character))
+			{
+				character.ApplyNetworkState(state);
+			}
+		}
+
+		OnMatchRunningChanged?.Invoke(IsMatchRunning);
+		OnTurnOwnerChanged?.Invoke(CurrentTurnPeerId);
+		OnPhaseChanged?.Invoke(CurrentPhase);
+		OnStateChanged?.Invoke();
+	}
+
+	private void ApplyCoreViewToSnapshot(MatchStateSnapshot snapshot, CoreGameView view, int viewerPeerId)
+	{
+		snapshot.CoreView = view;
+		snapshot.MatchId = view.MatchId;
+		snapshot.ModeId = view.ModeId;
+		snapshot.StateRevision = view.Revision;
+		snapshot.StateHash = view.StateHash;
+		snapshot.ActiveChoice = view.PendingChoice;
+		snapshot.ContentPacks = view.ContentPacks.ToList();
+		snapshot.IsMatchRunning = view.Status == CiyuanSha.GameCore.Domain.MatchStatus.Running;
+		snapshot.WinnerPeerId = view.WinnerSeatIds.Count == 1 ? ResolvePeerId(view.WinnerSeatIds[0]) : 0;
+		snapshot.ResultMessage = view.ResultMessage;
+		snapshot.CurrentTurnPeerId = ResolvePeerId(view.CurrentSeatId);
+		snapshot.CurrentTurnIndex = Math.Max(0, view.Players.OrderBy(player => player.SeatId).ToList().FindIndex(player => player.SeatId == view.CurrentSeatId));
+		snapshot.CurrentPhase = ToPresentationPhase(view.Phase).ToString();
+		snapshot.WaitingPeerId = view.PendingChoice is null ? 0 : ResolvePeerId(view.PendingChoice.ActingSeatId);
+		snapshot.WaitingKind = view.PendingChoice?.Kind.ToString() ?? string.Empty;
+		snapshot.WaitingPrompt = view.PendingChoice?.PromptKey ?? string.Empty;
+		snapshot.IsAwaitingPlayInput = false;
+		snapshot.IsAwaitingDiscardInput = false;
+		snapshot.HasPendingResponseWindow = false;
+		snapshot.PendingResponsePeerId = 0;
+		snapshot.PendingHarvestPeerId = 0;
+		snapshot.PendingTargetCardSelectionPeerId = 0;
+		snapshot.PendingHandCardSelectionPeerId = 0;
+		snapshot.HarvestPool.Clear();
+		snapshot.TargetCardSelectionPool.Clear();
+		snapshot.HandCardSelectionPool.Clear();
+		snapshot.SlashUsesThisTurn = 0;
+		snapshot.WineUsesThisTurn = 0;
+		snapshot.DrawPileCount = view.DrawPileCount;
+		snapshot.DiscardPileCount = view.DiscardPileCount;
+		snapshot.TurnOrder = view.Players.OrderBy(player => player.SeatId).Select(player => ResolvePeerId(player.SeatId)).ToList();
+		snapshot.Characters = BuildCoreCharacterStates(view, viewerPeerId);
+		snapshot.BattleLog = BuildCorePublicBattleLog();
+		snapshot.PresentationEvents.Clear();
+	}
+
+	private List<NetworkCharacterState> BuildCoreCharacterStates(CoreGameView view, int viewerPeerId)
+	{
+		Dictionary<string, CiyuanSha.GameCore.Domain.CardView> visibleCards = view.PublicCards
+			.Concat(view.PrivateHandCards)
+			.GroupBy(card => card.InstanceId, StringComparer.Ordinal)
+			.ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+		List<NetworkCharacterState> states = new();
+		foreach (CiyuanSha.GameCore.Domain.PlayerView player in view.Players.OrderBy(player => player.SeatId))
+		{
+			GeneralDefinitionV2? general = CoreRuntime?.Content.Generals.GetValueOrDefault(player.GeneralId);
+			Dictionary<CiyuanSha.GameCore.Domain.EquipmentSlot, string> equipmentNames = new();
+			foreach ((CiyuanSha.GameCore.Domain.EquipmentSlot slot, string cardId) in player.Equipment)
+			{
+				equipmentNames[slot] = ResolveVisibleCardName(cardId, visibleCards);
+			}
+			List<NetworkHandCardState> hand = view.PrivateHandCards
+				.Where(card => card.OwnerSeatId == player.SeatId)
+				.OrderBy(card => card.InstanceId, StringComparer.Ordinal)
+				.Select(ToNetworkCoreCard)
+				.ToList();
+			List<NetworkHandCardState> delayed = player.JudgementArea
+				.Where(visibleCards.ContainsKey)
+				.Select(cardId => ToNetworkCoreCard(visibleCards[cardId]))
+				.ToList();
+			states.Add(new NetworkCharacterState
+			{
+				PeerId = ResolvePeerId(player.SeatId),
+				CharacterId = player.GeneralId,
+				CharacterName = player.DisplayName,
+				Faction = player.IsRoleVisible ? player.Role.ToString() : "Hidden",
+				Gender = general?.Gender ?? "Unknown",
+				MaxHealth = player.MaxHealth,
+				CurrentHealth = player.Health,
+				IsDefeated = !player.IsAlive,
+				IsChained = player.IsChained,
+				EffectiveAttackRange = ResolveAttackRange(player, visibleCards),
+				HandCardCount = player.HandCount,
+				GeneralCardFileName = general?.Artwork ?? string.Empty,
+				EquippedWeaponName = equipmentNames.GetValueOrDefault(CiyuanSha.GameCore.Domain.EquipmentSlot.Weapon, string.Empty),
+				EquippedArmorName = equipmentNames.GetValueOrDefault(CiyuanSha.GameCore.Domain.EquipmentSlot.Armor, string.Empty),
+				EquippedOffensiveHorseName = equipmentNames.GetValueOrDefault(CiyuanSha.GameCore.Domain.EquipmentSlot.OffensiveMount, string.Empty),
+				EquippedDefensiveHorseName = equipmentNames.GetValueOrDefault(CiyuanSha.GameCore.Domain.EquipmentSlot.DefensiveMount, string.Empty),
+				EquippedTreasureName = equipmentNames.GetValueOrDefault(CiyuanSha.GameCore.Domain.EquipmentSlot.Treasure, string.Empty),
+				DelayedTricks = delayed,
+				Skills = player.SkillIds.Select(ToNetworkCoreSkill).ToList(),
+				HandCards = hand
+			});
+		}
+		return states;
+	}
+
+	private NetworkHandCardState ToNetworkCoreCard(CiyuanSha.GameCore.Domain.CardView card)
+	{
+		CardDefinition definition = CoreRuntime?.Content.Cards[card.DefinitionId]
+			?? throw new InvalidOperationException($"Unknown visible card definition: {card.DefinitionId}");
+		return new NetworkHandCardState
+		{
+			InstanceId = card.InstanceId,
+			CardType = ToPresentationCardType(definition),
+			DisplayName = definition.DisplayName,
+			Description = definition.Description,
+			Suit = card.Suit.ToString(),
+			Rank = card.Rank,
+			EquipmentSlot = ToPresentationEquipmentSlot(definition.EquipmentSlot),
+			EquipmentEffect = ToPresentationEquipmentEffect(definition.CardId),
+			AttackRangeModifier = definition.AttackRange,
+			IsDelayedTrick = definition.Category == CiyuanSha.GameCore.Domain.CardCategory.DelayedTrick
+		};
+	}
+
+	private NetworkSkillState ToNetworkCoreSkill(string skillId)
+	{
+		CiyuanSha.GameCore.Skills.SkillDefinitionV2 skill = CoreRuntime?.Content.Skills[skillId]
+			?? throw new InvalidOperationException($"Unknown skill definition: {skillId}");
+		return new NetworkSkillState
+		{
+			SkillId = skill.SkillId,
+			DisplayName = skill.DisplayName,
+			Description = skill.Description,
+			UsageScope = skill.UsageScope.ToString(),
+			TriggerPriority = skill.Triggers.OrderByDescending(trigger => trigger.Priority).FirstOrDefault()?.Priority.ToString() ?? "0",
+			TriggerTimings = string.Join(",", skill.Triggers.Select(trigger => $"{trigger.EventKind}.{trigger.EventStage}")),
+			IsActiveSkill = (skill.Tags & CiyuanSha.GameCore.Skills.SkillTags.Active) != 0,
+			TargetingMode = "ChoiceRequest",
+			MinTargetCount = 0,
+			MaxTargetCount = 0,
+			RequiresHandCardCost = skill.EffectId.Contains("cost", StringComparison.OrdinalIgnoreCase)
+		};
+	}
+
+	private List<NetworkBattleLogEntry> BuildCorePublicBattleLog()
+	{
+		if (CoreRuntime?.Engine is null)
+		{
+			return new List<NetworkBattleLogEntry>();
+		}
+		return CoreRuntime.Engine.Journal.Entries
+			.Where(entry => entry.Kind == CiyuanSha.GameCore.Replay.JournalEntryKind.RuleEvent
+				&& entry.RuleEvent is { Stage: CiyuanSha.GameCore.Events.RuleEventStage.Completed or CiyuanSha.GameCore.Events.RuleEventStage.Cancelled })
+			.Select(entry => new NetworkBattleLogEntry
+			{
+				Sequence = entry.Sequence > int.MaxValue ? int.MaxValue : (int)entry.Sequence,
+				Message = DescribePublicRuleEvent(entry.RuleEvent!)
+			})
+			.TakeLast(256)
+			.ToList();
+	}
+
+	private string ResolveVisibleCardName(string cardId, IReadOnlyDictionary<string, CiyuanSha.GameCore.Domain.CardView> visibleCards)
+	{
+		return visibleCards.TryGetValue(cardId, out CiyuanSha.GameCore.Domain.CardView? card)
+			&& CoreRuntime?.Content.Cards.TryGetValue(card.DefinitionId, out CardDefinition? definition) == true
+				? definition.DisplayName
+				: string.Empty;
+	}
+
+	private int ResolveAttackRange(CiyuanSha.GameCore.Domain.PlayerView player, IReadOnlyDictionary<string, CiyuanSha.GameCore.Domain.CardView> visibleCards)
+	{
+		if (!player.Equipment.TryGetValue(CiyuanSha.GameCore.Domain.EquipmentSlot.Weapon, out string? weaponId)
+			|| !visibleCards.TryGetValue(weaponId, out CiyuanSha.GameCore.Domain.CardView? weapon)
+			|| CoreRuntime?.Content.Cards.TryGetValue(weapon.DefinitionId, out CardDefinition? definition) != true)
+		{
+			return 1;
+		}
+		return Math.Max(1, definition!.AttackRange);
+	}
+
+	private int ResolveSeatId(int peerId)
+	{
+		if (peerId == 0)
+		{
+			return 0;
+		}
+		return LanMultiplayerManager.Instance?.Players.TryGetValue(peerId, out LanPlayerInfo? player) == true
+			? player.SeatId
+			: peerId;
+	}
+
+	private int ResolvePeerId(int seatId)
+	{
+		LanPlayerInfo? player = LanMultiplayerManager.Instance?.Players.Values.FirstOrDefault(item => item.SeatId == seatId && !item.IsSpectator);
+		return player?.PeerId ?? Math.Max(1, seatId);
+	}
+
+	private void ResetLegacyWaitingState()
+	{
+		_isWaitingForPlayInput = false;
+		_isWaitingForDiscardInput = false;
+		_hasQueuedPlayPhaseAction = false;
+		HasPendingResponseWindow = false;
+		PendingResponsePeerId = 0;
+		PendingResponsePrompt = string.Empty;
+		PendingResponseKind = ResponseWindowKind.None;
+		PendingHarvestPeerId = 0;
+		PendingHarvestPrompt = string.Empty;
+		PendingTargetCardSelectionPeerId = 0;
+		PendingTargetCardSelectionPrompt = string.Empty;
+		PendingHandCardSelectionPeerId = 0;
+		PendingHandCardSelectionPrompt = string.Empty;
+		CanDeclineHandCardSelection = false;
+		_harvestPool.Clear();
+		_targetCardSelectionPool.Clear();
+		_handCardSelectionPool.Clear();
+	}
+
+	private static TurnPhase ToPresentationPhase(CiyuanSha.GameCore.Domain.GamePhase phase) => phase switch
+	{
+		CiyuanSha.GameCore.Domain.GamePhase.Preparation => TurnPhase.TurnStart,
+		CiyuanSha.GameCore.Domain.GamePhase.Judgement => TurnPhase.JudgementPhase,
+		CiyuanSha.GameCore.Domain.GamePhase.Draw => TurnPhase.DrawPhase,
+		CiyuanSha.GameCore.Domain.GamePhase.Play => TurnPhase.PlayPhase,
+		CiyuanSha.GameCore.Domain.GamePhase.Discard => TurnPhase.DiscardPhase,
+		CiyuanSha.GameCore.Domain.GamePhase.End => TurnPhase.EndPhase,
+		_ => TurnPhase.TurnStart
+	};
+
+	private static string ToPresentationCardType(CardDefinition definition) => definition.EffectId switch
+	{
+		"card.slash" => CardType.Slash.ToString(),
+		"card.fire_slash" => CardType.FireSlash.ToString(),
+		"card.thunder_slash" => CardType.ThunderSlash.ToString(),
+		"card.dodge" => CardType.Dodge.ToString(),
+		"card.peach" => CardType.Peach.ToString(),
+		"card.wine" => CardType.Wine.ToString(),
+		"card.dismantle" => CardType.Dismantle.ToString(),
+		"card.snatch" => CardType.Snatch.ToString(),
+		"card.duel" => CardType.Duel.ToString(),
+		"card.ex_nihilo" => CardType.ExNihilo.ToString(),
+		"card.nullification" => CardType.Nullification.ToString(),
+		"card.barbarians" => CardType.Barbarians.ToString(),
+		"card.arrow_barrage" => CardType.ArrowBarrage.ToString(),
+		"card.peach_garden" => CardType.PeachGarden.ToString(),
+		"card.harvest" => CardType.Harvest.ToString(),
+		"card.indulgence" => CardType.Indulgence.ToString(),
+		"card.supply_shortage" => CardType.SupplyShortage.ToString(),
+		"card.lightning" => CardType.Lightning.ToString(),
+		"card.iron_chain" => CardType.IronChain.ToString(),
+		"card.fire_attack" => CardType.FireAttack.ToString(),
+		"card.borrow_sword" => CardType.BorrowSword.ToString(),
+		"card.equipment" when definition.EquipmentSlot == CiyuanSha.GameCore.Domain.EquipmentSlot.Weapon => CardType.Weapon.ToString(),
+		"card.equipment" when definition.EquipmentSlot == CiyuanSha.GameCore.Domain.EquipmentSlot.Armor => CardType.Armor.ToString(),
+		"card.equipment" when definition.EquipmentSlot == CiyuanSha.GameCore.Domain.EquipmentSlot.OffensiveMount => CardType.OffensiveHorse.ToString(),
+		"card.equipment" when definition.EquipmentSlot == CiyuanSha.GameCore.Domain.EquipmentSlot.DefensiveMount => CardType.DefensiveHorse.ToString(),
+		"card.equipment" when definition.EquipmentSlot == CiyuanSha.GameCore.Domain.EquipmentSlot.Treasure => CardType.Treasure.ToString(),
+		_ => CardType.None.ToString()
+	};
+
+	private static string ToPresentationEquipmentSlot(CiyuanSha.GameCore.Domain.EquipmentSlot? slot) => slot switch
+	{
+		CiyuanSha.GameCore.Domain.EquipmentSlot.Weapon => EquipmentSlotType.Weapon.ToString(),
+		CiyuanSha.GameCore.Domain.EquipmentSlot.Armor => EquipmentSlotType.Armor.ToString(),
+		CiyuanSha.GameCore.Domain.EquipmentSlot.OffensiveMount => EquipmentSlotType.OffensiveHorse.ToString(),
+		CiyuanSha.GameCore.Domain.EquipmentSlot.DefensiveMount => EquipmentSlotType.DefensiveHorse.ToString(),
+		CiyuanSha.GameCore.Domain.EquipmentSlot.Treasure => EquipmentSlotType.Treasure.ToString(),
+		_ => EquipmentSlotType.None.ToString()
+	};
+
+	private static string ToPresentationEquipmentEffect(string cardId) => cardId switch
+	{
+		"crossbow" => EquipmentEffectType.Crossbow.ToString(),
+		"qinggang_sword" => EquipmentEffectType.QinggangSword.ToString(),
+		"fangtian_halberd" => EquipmentEffectType.FangtianHalberd.ToString(),
+		"stone_axe" => EquipmentEffectType.StoneAxe.ToString(),
+		"kylin_bow" => EquipmentEffectType.KylinBow.ToString(),
+		"green_dragon_blade" => EquipmentEffectType.GreenDragonBlade.ToString(),
+		"double_swords" => EquipmentEffectType.DoubleSwords.ToString(),
+		"serpent_spear" => EquipmentEffectType.SerpentSpear.ToString(),
+		"ice_sword" => EquipmentEffectType.IceSword.ToString(),
+		"guding_blade" => EquipmentEffectType.GudingBlade.ToString(),
+		"vermilion_fan" => EquipmentEffectType.VermilionFan.ToString(),
+		"eight_diagram" => EquipmentEffectType.EightDiagram.ToString(),
+		"vine_armor" => EquipmentEffectType.VineArmor.ToString(),
+		"renwang_shield" => EquipmentEffectType.RenwangShield.ToString(),
+		"silver_lion" => EquipmentEffectType.SilverLion.ToString(),
+		"imperial_seal" => EquipmentEffectType.ImperialSeal.ToString(),
+		_ => EquipmentEffectType.None.ToString()
+	};
+
+	private static string DescribePublicRuleEvent(CiyuanSha.GameCore.Events.RuleEvent ruleEvent)
+	{
+		if (ruleEvent.Payload is CiyuanSha.GameCore.Events.TextRuleEventPayload text)
+		{
+			return text.MessageKey;
+		}
+		return ruleEvent.Kind switch
+		{
+			CiyuanSha.GameCore.Events.RuleEventKind.PhaseChanged when ruleEvent.Payload is CiyuanSha.GameCore.Events.PhaseRuleEventPayload phase => $"Phase: {phase.Phase}",
+			CiyuanSha.GameCore.Events.RuleEventKind.Damage when ruleEvent.Payload is CiyuanSha.GameCore.Events.DamageRuleEventPayload damage => $"Seat {ruleEvent.SourceSeatId} deals {damage.Amount} {damage.Nature} damage.",
+			_ => ruleEvent.Kind.ToString()
+		};
+	}
+
 	public MatchStateSnapshot BuildMatchStateSnapshot(int viewerPeerId = -1)
 	{
 		GameCoreRuntime? core = CoreRuntime;
 		CoreViewerRole viewerRole = viewerPeerId == 0 ? CoreViewerRole.Spectator : CoreViewerRole.Player;
+		int viewerSeatId = ResolveSeatId(viewerPeerId);
 		CoreGameView? coreView = core?.Engine is null
 			? null
 			: core.BuildView(viewerRole == CoreViewerRole.Spectator
 				? CoreViewerContext.Spectator
-				: CoreViewerContext.ForPlayer(Math.Max(1, viewerPeerId)));
-		return new MatchStateSnapshot
+				: CoreViewerContext.ForPlayer(Math.Max(1, viewerSeatId)));
+		MatchStateSnapshot snapshot = new()
 		{
 			ProtocolVersion = CiyuanSha.GameCore.Networking.ProtocolV2.Version,
 			EngineApiVersion = CiyuanSha.GameCore.Networking.ProtocolV2.EngineApiVersion,
@@ -1047,6 +1435,7 @@ public partial class GameManager : Node
 			StateHash = coreView?.StateHash ?? string.Empty,
 			ViewerRole = viewerRole,
 			ActiveChoice = coreView?.PendingChoice,
+			CoreView = coreView,
 			ContentPacks = core?.ContentPacks.ToList() ?? new List<CiyuanSha.GameCore.Content.ContentPackReference>(),
 			IsMatchRunning = IsMatchRunning,
 			WinnerPeerId = WinnerPeerId,
@@ -1106,6 +1495,11 @@ public partial class GameManager : Node
 				.Select(ClonePresentationEvent)
 				.ToList()
 		};
+		if (coreView is not null)
+		{
+			ApplyCoreViewToSnapshot(snapshot, coreView, viewerPeerId);
+		}
+		return snapshot;
 	}
 
 	public void ApplyMatchStateSnapshot(MatchStateSnapshot snapshot)
@@ -1116,6 +1510,7 @@ public partial class GameManager : Node
 		}
 
 		bool wasMatchRunning = IsMatchRunning;
+		IsCoreMatchActive = snapshot.CoreView is not null;
 		IsMatchRunning = snapshot.IsMatchRunning;
 		WinnerPeerId = Math.Max(0, snapshot.WinnerPeerId);
 		ResultMessage = snapshot.ResultMessage ?? string.Empty;

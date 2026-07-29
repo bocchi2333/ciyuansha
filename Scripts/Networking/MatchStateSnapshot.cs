@@ -29,6 +29,13 @@ public class MatchStateSnapshot
 
     public ChoiceRequest? ActiveChoice { get; set; }
 
+    /// <summary>
+    /// The authoritative protocol-V2 projection for this specific viewer. All
+    /// remaining properties are presentation compatibility fields derived from
+    /// this view and must never be used as rule input.
+    /// </summary>
+    public GameView? CoreView { get; set; }
+
     public List<ContentPackReference> ContentPacks { get; set; } = new();
 
     public bool IsMatchRunning { get; set; }

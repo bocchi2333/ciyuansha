@@ -23,7 +23,7 @@
 - 武将数据：`E:\次元杀\Data\general_catalog.json`
 - 压缩规则文档：`E:\次元杀\Docs\sanguosha-rules-compressed.md`
 - 常用编译命令：在项目根目录执行 `dotnet build CiyuanSha.sln`
-- 当前项目未检测到 `.git` 仓库，重大重构前需要主动保留可恢复副本。
+- 历史状态（已解决）：当时尚未初始化 Git；2026-07-30 已建立可恢复基线并提交。
 - 开发试玩包仍依赖 Godot Mono C# 项目运行方式，朋友电脑必须安装 `.NET SDK 8.0+`，仅安装 Runtime 不够。
 
 ## 核心架构

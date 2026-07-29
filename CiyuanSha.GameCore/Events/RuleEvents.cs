@@ -43,6 +43,7 @@ public enum RuleEventKind
     StateFaulted = 22,
     CardCancelled = 23,
     CardRevealed = 24,
+    PhaseDirectiveScheduled = 25,
     Custom = 100
 }
 
@@ -60,7 +61,12 @@ public sealed record EmptyRuleEventPayload : RuleEventPayload
     public static EmptyRuleEventPayload Instance { get; } = new();
 }
 
-public sealed record PhaseRuleEventPayload(GamePhase Phase, bool WasSkipped = false) : RuleEventPayload;
+public sealed record PhaseRuleEventPayload(
+    GamePhase Phase,
+    bool WasSkipped = false,
+    GamePhase ReplacementPhase = GamePhase.NotStarted,
+    bool IsExtra = false,
+    string SourceId = "") : RuleEventPayload;
 
 public sealed record CardMoveRuleEventPayload(
     string CardInstanceId,

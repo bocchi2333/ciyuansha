@@ -53,7 +53,28 @@ public sealed class ModeAndEngineTests
         GameView spectator = engine.BuildView(ViewerContext.Spectator);
         Assert.Empty(spectator.PrivateHandCardIds);
         Assert.Empty(spectator.PendingChoice!.Options);
-        Assert.Single(spectator.Players.Where(player => player.Role == IdentityRole.Lord));
+        Assert.Single(spectator.Players, player => player.Role == IdentityRole.Lord);
+    }
+
+    [Fact]
+    public void AcceptedChoiceCannotBeReplayedAndRejectionDoesNotChangeState()
+    {
+        (ContentRegistry content, _) = TestContent.Load();
+        GameEngine engine = GameEngine.Start(CreateConfig(content, BuiltInModeIds.Duel, 2), content);
+        ChoiceRequest request = Assert.IsType<ChoiceRequest>(engine.State.PendingChoice);
+        ChoiceOption option = Assert.Single(request.Options.Where(option => option.IsEnabled).Take(1));
+        ChoiceResult result = ChoiceResult.Select(request.RequestId, request.StateRevision, option.OptionId);
+
+        EngineStepResult accepted = engine.Advance(request.ActingSeatId, result);
+        Assert.NotEqual(EngineProgress.Rejected, accepted.Progress);
+        string hashAfterAccepted = engine.State.ComputeCanonicalHash();
+        long cursorAfterAccepted = engine.Journal.Cursor;
+
+        EngineStepResult duplicate = engine.Advance(request.ActingSeatId, result);
+
+        Assert.Equal(EngineProgress.Rejected, duplicate.Progress);
+        Assert.Equal(hashAfterAccepted, engine.State.ComputeCanonicalHash());
+        Assert.Equal(cursorAfterAccepted, engine.Journal.Cursor);
     }
 
     [Fact]
@@ -93,7 +114,7 @@ public sealed class ModeAndEngineTests
     {
         MatchId = "test", Revision = request.StateRevision, ModeId = BuiltInModeIds.Duel,
         Status = MatchStatus.Running, Phase = GamePhase.Play, CurrentSeatId = 1, RoundNumber = 1,
-        Players = Array.Empty<PlayerView>(), PublicCards = Array.Empty<CardView>(), PrivateHandCardIds = Array.Empty<string>(),
+        Players = Array.Empty<PlayerView>(), PublicCards = Array.Empty<CardView>(), PrivateHandCardIds = Array.Empty<string>(), PrivateHandCards = Array.Empty<CardView>(),
         DrawPileCount = 0, DiscardPileCount = 0, PendingChoice = request, ContentPacks = Array.Empty<ContentPackReference>(),
         WinnerSeatIds = Array.Empty<int>(), ResultMessage = string.Empty, StateHash = string.Empty
     };

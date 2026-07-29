@@ -1,4 +1,4 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://Scripts/App/MainScreen.cs" id="1_main_screen"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/LanLobbyPanel.tscn" id="2_lan_lobby_panel"]
@@ -6,6 +6,7 @@
 [ext_resource type="PackedScene" path="res://Scenes/UI/MatchHudPanel.tscn" id="4_match_hud_panel"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/PresentationSettingsPanel.tscn" id="5_presentation_settings"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/SystemDialogPanel.tscn" id="6_system_dialog"]
+[ext_resource type="PackedScene" path="res://Scenes/UI/ReplayViewerPanel.tscn" id="7_replay_viewer"]
 
 [node name="Main" type="Control"]
 layout_mode = 3
@@ -18,6 +19,8 @@ mouse_filter = 1
 script = ExtResource("1_main_screen")
 LobbyRootPath = NodePath("LobbyRoot")
 MatchRootPath = NodePath("MatchRoot")
+ReplayRootPath = NodePath("ReplayRoot")
+ReplayOpenButtonPath = NodePath("ReplayOpenButton")
 
 [node name="Background" type="ColorRect" parent="."]
 z_index = -200
@@ -47,6 +50,19 @@ layout_mode = 1
 
 [node name="MatchHudPanel" parent="MatchRoot" instance=ExtResource("4_match_hud_panel")]
 layout_mode = 1
+
+[node name="ReplayRoot" parent="." instance=ExtResource("7_replay_viewer")]
+visible = false
+layout_mode = 1
+
+[node name="ReplayOpenButton" type="Button" parent="."]
+z_index = 25
+layout_mode = 0
+offset_left = 24.0
+offset_top = 24.0
+offset_right = 158.0
+offset_bottom = 68.0
+text = "离线录像"
 
 [node name="PresentationSettingsPanel" parent="." instance=ExtResource("5_presentation_settings")]
 layout_mode = 1

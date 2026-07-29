@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using CiyuanSha.GameCore.Domain;
 using CiyuanSha.GameCore.Replay;
 using CiyuanSha.Gameplay.Core;
@@ -41,7 +42,7 @@ public partial class ReplayController : Node
         try
         {
             GameCoreRuntime runtime = GameManager.Instance?.CoreRuntime ?? GameCoreRuntime.LoadDefault();
-            ReplayDocument document = ReplayArchive.ReadAsync(path).GetAwaiter().GetResult();
+            ReplayDocument document = Task.Run(() => ReplayArchive.ReadAsync(path)).GetAwaiter().GetResult();
             Session = new ReplayPlaybackSession(document, runtime.Content);
             _stepAccumulator = 0;
             OnReplayChanged?.Invoke();

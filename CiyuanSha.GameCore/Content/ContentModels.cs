@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using CiyuanSha.GameCore.Domain;
+using CiyuanSha.GameCore.Networking;
 using CiyuanSha.GameCore.Skills;
 
 namespace CiyuanSha.GameCore.Content;
@@ -263,6 +264,11 @@ public sealed class ContentRegistry
                 errors.Add($"Pack {pack.Manifest.PackId} must declare GPL-3.0-only.");
             }
 
+            if (!string.Equals(pack.Manifest.EngineApiVersion, ProtocolV2.EngineApiVersion, StringComparison.Ordinal))
+            {
+                errors.Add($"Pack {pack.Manifest.PackId} targets engine API {pack.Manifest.EngineApiVersion}, expected {ProtocolV2.EngineApiVersion}.");
+            }
+
             foreach (ContentPackDependency dependency in pack.Manifest.Dependencies)
             {
                 if (!combined.TryGetValue(dependency.PackId, out LoadedContentPack? dependencyPack))
@@ -301,6 +307,59 @@ public sealed class ContentRegistry
         AddDuplicateErrors(incoming.SelectMany(pack => pack.Data.Skills).Select(skill => skill.SkillId), "skill", errors, _skills.Keys);
         AddDuplicateErrors(incoming.SelectMany(pack => pack.Data.Decks).Select(deck => deck.DeckId), "deck", errors, _decks.Keys);
         AddDuplicateErrors(incoming.SelectMany(pack => pack.Data.Bosses).Select(boss => boss.BossId), "boss", errors, _bosses.Keys);
+
+        Dictionary<string, CardDefinition> allCards = _cards.Values
+            .Concat(incoming.SelectMany(pack => pack.Data.Cards))
+            .GroupBy(card => card.CardId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        Dictionary<string, SkillDefinitionV2> allSkills = _skills.Values
+            .Concat(incoming.SelectMany(pack => pack.Data.Skills))
+            .GroupBy(skill => skill.SkillId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        Dictionary<string, GeneralDefinitionV2> allGenerals = _generals.Values
+            .Concat(incoming.SelectMany(pack => pack.Data.Generals))
+            .GroupBy(general => general.GeneralId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+
+        foreach (GeneralDefinitionV2 general in allGenerals.Values)
+        {
+            foreach (string skillId in general.SkillIds.Where(skillId => !allSkills.ContainsKey(skillId)))
+            {
+                errors.Add($"General {general.GeneralId} references unknown skill {skillId}.");
+            }
+        }
+        foreach (SkillDefinitionV2 skill in allSkills.Values)
+        {
+            foreach (string subSkillId in (skill.SubSkillIds ?? Array.Empty<string>()).Where(subSkillId => !allSkills.ContainsKey(subSkillId)))
+            {
+                errors.Add($"Skill {skill.SkillId} references unknown sub-skill {subSkillId}.");
+            }
+            foreach (SkillMarkDefinition mark in skill.Marks ?? Array.Empty<SkillMarkDefinition>())
+            {
+                if (mark.MaximumValue < 0 || mark.InitialValue < 0 || mark.InitialValue > mark.MaximumValue)
+                {
+                    errors.Add($"Skill {skill.SkillId} has invalid mark bounds for {mark.MarkId}.");
+                }
+            }
+        }
+        foreach (DeckDefinition deck in _decks.Values.Concat(incoming.SelectMany(pack => pack.Data.Decks)))
+        {
+            foreach (string cardId in deck.Cards.Select(card => card.CardId).Where(cardId => !allCards.ContainsKey(cardId)).Distinct(StringComparer.Ordinal))
+            {
+                errors.Add($"Deck {deck.DeckId} references unknown card {cardId}.");
+            }
+        }
+        foreach (BossDefinition boss in _bosses.Values.Concat(incoming.SelectMany(pack => pack.Data.Bosses)))
+        {
+            if (!allGenerals.ContainsKey(boss.GeneralId))
+            {
+                errors.Add($"Boss {boss.BossId} references unknown general {boss.GeneralId}.");
+            }
+            foreach (string skillId in boss.PhaseTwoSkillIds.Where(skillId => !allSkills.ContainsKey(skillId)))
+            {
+                errors.Add($"Boss {boss.BossId} references unknown phase-two skill {skillId}.");
+            }
+        }
         return errors;
     }
 

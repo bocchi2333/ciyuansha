@@ -20,19 +20,19 @@ public sealed class CardRuleVectorTests
         Submit(engine, $"action:use:{fireAttackId}");
         Submit(engine, $"seat:{targetSeatId}");
         DeclineNullification(engine);
-        ChoiceRequest reveal = Assert.NotNull(engine.State.PendingChoice);
+        ChoiceRequest reveal = engine.State.PendingChoice ?? throw new XunitException("Expected a Fire Attack reveal choice.");
         Assert.Equal("card.fire_attack.choose_reveal", reveal.PromptKey);
         ChoiceOption revealOption = reveal.Options.First(option =>
             engine.State.Players[sourceSeatId].Hand.Any(sourceCardId =>
                 engine.State.Cards[sourceCardId].Suit == engine.State.Cards[option.EntityId].Suit));
         int healthBefore = engine.State.Players[targetSeatId].Health;
         Submit(engine, revealOption.OptionId);
-        ChoiceRequest discard = Assert.NotNull(engine.State.PendingChoice);
+        ChoiceRequest discard = engine.State.PendingChoice ?? throw new XunitException("Expected a Fire Attack discard choice.");
         ChoiceOption matchingDiscard = discard.Options.First(option => option.OptionId.StartsWith("card:", StringComparison.Ordinal));
         Submit(engine, matchingDiscard.OptionId);
 
         Assert.Equal(healthBefore - 1, engine.State.Players[targetSeatId].Health);
-        Assert.True(engine.Journal.Entries.Any(entry => entry.RuleEvent?.Kind == CiyuanSha.GameCore.Events.RuleEventKind.CardRevealed));
+        Assert.Contains(engine.Journal.Entries, entry => entry.RuleEvent?.Kind == CiyuanSha.GameCore.Events.RuleEventKind.CardRevealed);
     }
 
     [Fact]
@@ -71,7 +71,7 @@ public sealed class CardRuleVectorTests
         Submit(transferEngine, "control:decline");
 
         Assert.False(transferEngine.State.Players[holder].Equipment.ContainsKey(EquipmentSlot.Weapon));
-        Assert.True(transferEngine.State.Players[source].Hand.Contains(weapon));
+        Assert.Contains(weapon, transferEngine.State.Players[source].Hand);
     }
 
     [Fact]
@@ -87,13 +87,13 @@ public sealed class CardRuleVectorTests
         int firstHealth = engine.State.Players[targets[0]].Health;
 
         Submit(engine, $"action:use:{barbarians}");
-        ChoiceRequest nullRequest = Assert.NotNull(engine.State.PendingChoice);
+        ChoiceRequest nullRequest = engine.State.PendingChoice ?? throw new XunitException("Expected a Nullification choice.");
         Assert.Equal("response.nullification", nullRequest.PromptKey);
         Assert.Equal(targets[0], nullRequest.ActingSeatId);
         Submit(engine, $"card:{nullification}");
 
         Assert.Equal(firstHealth, engine.State.Players[targets[0]].Health);
-        ChoiceRequest next = Assert.NotNull(engine.State.PendingChoice);
+        ChoiceRequest next = engine.State.PendingChoice ?? throw new XunitException("Expected the next mass-trick response.");
         Assert.Equal(targets[1], next.ActingSeatId);
         Assert.Equal("response.slash", next.PromptKey);
     }
@@ -150,7 +150,7 @@ public sealed class CardRuleVectorTests
         EquipDefinition(engine, source, "fangtian_halberd", slash);
 
         Submit(engine, $"action:use:{slash}");
-        ChoiceRequest targets = Assert.NotNull(engine.State.PendingChoice);
+        ChoiceRequest targets = engine.State.PendingChoice ?? throw new XunitException("Expected a Fangtian target choice.");
         Assert.Equal(3, targets.MaximumSelections);
         Assert.Equal(3, targets.Options.Count);
     }
@@ -189,7 +189,7 @@ public sealed class CardRuleVectorTests
                 return engine;
             }
         }
-        throw new TestFailureException("Could not find a deterministic opening hand for the rule vector.");
+        throw new XunitException("Could not find a deterministic opening hand for the rule vector.");
     }
 
     private static MatchConfig CreateConfig(ContentRegistry content, string modeId, int playerCount, ulong seed)
@@ -207,7 +207,7 @@ public sealed class CardRuleVectorTests
 
     private static void Submit(GameEngine engine, params string[] optionIds)
     {
-        ChoiceRequest request = Assert.NotNull(engine.State.PendingChoice);
+        ChoiceRequest request = engine.State.PendingChoice ?? throw new XunitException("Expected a pending choice.");
         EngineStepResult result = engine.Advance(request.ActingSeatId, ChoiceResult.Select(request.RequestId, request.StateRevision, optionIds));
         Assert.NotEqual(EngineProgress.Rejected, result.Progress);
         Assert.NotEqual(EngineProgress.Faulted, result.Progress);
@@ -218,7 +218,7 @@ public sealed class CardRuleVectorTests
         System.Reflection.MethodInfo method = typeof(GameEngine).GetMethod(
             "RequestPlayAction",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
-            ?? throw new TestFailureException("RequestPlayAction test hook was not found.");
+            ?? throw new XunitException("RequestPlayAction test hook was not found.");
         method.Invoke(engine, new object[] { engine.State.Players[engine.State.CurrentSeatId] });
     }
 
@@ -230,7 +230,7 @@ public sealed class CardRuleVectorTests
             Submit(engine, "control:decline");
             if (++guard > 20)
             {
-                throw new TestFailureException("Nullification chain did not terminate.");
+                throw new XunitException("Nullification chain did not terminate.");
             }
         }
     }

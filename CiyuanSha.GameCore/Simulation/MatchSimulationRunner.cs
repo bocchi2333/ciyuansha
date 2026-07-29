@@ -42,7 +42,7 @@ public sealed class MatchSimulationRunner
         _policy = policy ?? new DeterministicBotPolicy();
     }
 
-    public SimulationResult Run(MatchConfig config, int maximumDecisions = 20000)
+    public SimulationResult Run(MatchConfig config, int maximumDecisions = 50000)
     {
         ArgumentNullException.ThrowIfNull(config);
         if (maximumDecisions <= 0)
@@ -109,7 +109,7 @@ public sealed class MatchSimulationRunner
     public SimulationBatchReport RunBatch(
         int count,
         Func<int, MatchConfig> configFactory,
-        int maximumDecisionsPerMatch = 20000)
+        int maximumDecisionsPerMatch = 50000)
     {
         if (count <= 0)
         {

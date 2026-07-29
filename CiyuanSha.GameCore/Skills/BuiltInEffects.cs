@@ -1,4 +1,5 @@
 using CiyuanSha.GameCore.Choices;
+using CiyuanSha.GameCore.Domain;
 using CiyuanSha.GameCore.Events;
 
 namespace CiyuanSha.GameCore.Skills;
@@ -10,11 +11,11 @@ public static class BuiltInEffects
         EffectRegistry registry = new();
         foreach (string effectId in SkillEffectIds)
         {
-            registry.Register(new DeclarativeSkillEffect(effectId));
+            registry.Register(new BuiltInSkillEffect(effectId));
         }
         foreach (string effectId in CardEffectIds)
         {
-            registry.Register(new DeclarativeCardEffect(effectId));
+            registry.Register(new BuiltInCardEffect(effectId));
         }
         return registry;
     }
@@ -64,27 +65,65 @@ public static class BuiltInEffects
         "card.equipment"
     };
 
-    private sealed class DeclarativeSkillEffect : ISkillEffect
+    private sealed class BuiltInSkillEffect : ISkillEffect
     {
-        public DeclarativeSkillEffect(string effectId) => EffectId = effectId;
+        public BuiltInSkillEffect(string effectId) => EffectId = effectId;
 
         public string EffectId { get; }
 
-        public bool CanTrigger(SkillContext context) => context.Owner.IsAlive;
+        public bool CanTrigger(SkillContext context) => context.Owner.IsAlive
+            && context.State.Players.ContainsKey(context.Owner.SeatId);
 
         public ChoiceRequest? BuildCostChoice(SkillContext context, Func<string> requestIdFactory) => null;
 
-        public SkillEffectResult Resolve(SkillContext context) => new(true, Array.Empty<RuleEvent>());
+        public SkillEffectResult Resolve(SkillContext context)
+        {
+            if (!CanTrigger(context))
+            {
+                return SkillEffectResult.NotApplied("skill.owner_unavailable");
+            }
+            RuleEvent intent = new(
+                $"effect:{EffectId}:{context.Owner.SeatId}:{context.State.Revision}",
+                context.State.Revision,
+                context.TriggerEvent?.EventId ?? string.Empty,
+                RuleEventKind.SkillTriggered,
+                RuleEventStage.Created,
+                context.Owner.SeatId,
+                context.TargetSeatIds,
+                new TextRuleEventPayload("skill.effect_resolved", new Dictionary<string, string> { ["effectId"] = EffectId }),
+                SourceSkillId: EffectId);
+            return new SkillEffectResult(true, new[] { intent });
+        }
 
-        public double GetAiValue(SkillContext context) => 0;
+        public double GetAiValue(SkillContext context) => CanTrigger(context) ? 1 : double.NegativeInfinity;
     }
 
-    private sealed class DeclarativeCardEffect : ICardEffect
+    private sealed class BuiltInCardEffect : ICardEffect
     {
-        public DeclarativeCardEffect(string effectId) => EffectId = effectId;
+        public BuiltInCardEffect(string effectId) => EffectId = effectId;
 
         public string EffectId { get; }
 
-        public CardEffectResult Resolve(CardEffectContext context) => new(true, Array.Empty<RuleEvent>());
+        public CardEffectResult Resolve(CardEffectContext context)
+        {
+            bool valid = context.Source.IsAlive
+                && context.State.Cards.TryGetValue(context.Card.InstanceId, out CardState? authoritative)
+                && ReferenceEquals(authoritative, context.Card)
+                && context.Targets.All(target => target.IsAlive && context.State.Players.ContainsKey(target.SeatId));
+            if (!valid)
+            {
+                return new CardEffectResult(false, Array.Empty<RuleEvent>(), FailureKey: "card.effect_context_invalid");
+            }
+            RuleEvent intent = new(
+                $"effect:{EffectId}:{context.Card.InstanceId}:{context.State.Revision}",
+                context.State.Revision,
+                string.Empty,
+                RuleEventKind.CardUsed,
+                RuleEventStage.Created,
+                context.Source.SeatId,
+                context.Targets.Select(target => target.SeatId).ToArray(),
+                new CardMoveRuleEventPayload(context.Card.InstanceId, context.Card.Zone, CardZone.Processing, context.Source.SeatId));
+            return new CardEffectResult(true, new[] { intent });
+        }
     }
 }

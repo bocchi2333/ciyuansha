@@ -36,7 +36,7 @@ public static class ReplayArchive
 
         await using FileStream file = new(path, FileMode.Create, FileAccess.Write, FileShare.None);
         using ZipArchive archive = new(file, ZipArchiveMode.Create, leaveOpen: true);
-        await WriteJsonEntryAsync(archive, "header.json", document.Header, cancellationToken);
+        await WriteJsonEntryAsync(archive, "header.json", document.Header, cancellationToken).ConfigureAwait(false);
 
         ZipArchiveEntry eventsEntry = archive.CreateEntry("events.jsonl", CompressionLevel.SmallestSize);
         await using (Stream eventStream = eventsEntry.Open())
@@ -45,11 +45,15 @@ public static class ReplayArchive
             foreach (RuleJournalEntry entry in document.Entries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                await writer.WriteLineAsync(JsonSerializer.Serialize(entry, JsonOptions));
+                await writer.WriteLineAsync(JsonSerializer.Serialize(entry, JsonOptions)).ConfigureAwait(false);
             }
         }
 
-        await WriteJsonEntryAsync(archive, "checkpoints.json", document.Checkpoints, cancellationToken);
+        await WriteJsonEntryAsync(archive, "checkpoints.json", document.Checkpoints, cancellationToken).ConfigureAwait(false);
+        if (document.SafeViewCheckpoints.Count > 0)
+        {
+            await WriteJsonEntryAsync(archive, "views.json", document.SafeViewCheckpoints, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     public static async Task<ReplayDocument> ReadAsync(string path, CancellationToken cancellationToken = default)
@@ -57,15 +61,18 @@ public static class ReplayArchive
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         await using FileStream file = new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         using ZipArchive archive = new(file, ZipArchiveMode.Read, leaveOpen: true);
-        ReplayHeader header = await ReadJsonEntryAsync<ReplayHeader>(archive, "header.json", cancellationToken);
-        IReadOnlyList<ReplayCheckpoint> checkpoints = await ReadJsonEntryAsync<List<ReplayCheckpoint>>(archive, "checkpoints.json", cancellationToken);
+        ReplayHeader header = await ReadJsonEntryAsync<ReplayHeader>(archive, "header.json", cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<ReplayCheckpoint> checkpoints = await ReadJsonEntryAsync<List<ReplayCheckpoint>>(archive, "checkpoints.json", cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<ReplayViewCheckpoint> views = archive.GetEntry("views.json") is null
+            ? Array.Empty<ReplayViewCheckpoint>()
+            : await ReadJsonEntryAsync<List<ReplayViewCheckpoint>>(archive, "views.json", cancellationToken).ConfigureAwait(false);
 
         ZipArchiveEntry eventsEntry = archive.GetEntry("events.jsonl")
             ?? throw new InvalidDataException("Replay is missing events.jsonl.");
         List<RuleJournalEntry> events = new();
         await using Stream eventStream = eventsEntry.Open();
         using StreamReader reader = new(eventStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
-        while (await reader.ReadLineAsync(cancellationToken) is { } line)
+        while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
         {
             if (string.IsNullOrWhiteSpace(line))
             {
@@ -76,9 +83,13 @@ public static class ReplayArchive
                 ?? throw new InvalidDataException("Replay contains an invalid journal entry."));
         }
 
-        ValidateMonotonicEntries(events);
-        ValidateHashChain(events);
-        return new ReplayDocument(header, events, checkpoints);
+        ValidateMonotonicEntries(events, requireContiguous: header.IsOmniscient);
+        if (header.IsOmniscient)
+        {
+            ValidateHashChain(events);
+        }
+        ValidateViewCheckpoints(views);
+        return new ReplayDocument(header, events, checkpoints, views);
     }
 
     public static ReplayValidationResult ValidateContent(ReplayHeader header, IReadOnlyList<ContentPackReference> availablePacks)
@@ -92,6 +103,11 @@ public static class ReplayArchive
         if (!string.Equals(header.EngineApiVersion, ProtocolV2.EngineApiVersion, StringComparison.Ordinal))
         {
             errors.Add($"Replay engine mismatch: {header.EngineApiVersion}");
+        }
+
+        if (header.ProtocolVersion != ProtocolV2.Version)
+        {
+            errors.Add($"Replay protocol mismatch: {header.ProtocolVersion}");
         }
 
         Dictionary<string, ContentPackReference> available = availablePacks.ToDictionary(pack => pack.PackId, StringComparer.Ordinal);
@@ -117,26 +133,40 @@ public static class ReplayArchive
     {
         ZipArchiveEntry entry = archive.CreateEntry(name, CompressionLevel.SmallestSize);
         await using Stream stream = entry.Open();
-        await JsonSerializer.SerializeAsync(stream, value, JsonOptions, cancellationToken);
+        await JsonSerializer.SerializeAsync(stream, value, JsonOptions, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<T> ReadJsonEntryAsync<T>(ZipArchive archive, string name, CancellationToken cancellationToken)
     {
         ZipArchiveEntry entry = archive.GetEntry(name) ?? throw new InvalidDataException($"Replay is missing {name}.");
         await using Stream stream = entry.Open();
-        return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, cancellationToken)
+        return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException($"Replay contains invalid {name}.");
     }
 
-    private static void ValidateMonotonicEntries(IReadOnlyList<RuleJournalEntry> entries)
+    private static void ValidateMonotonicEntries(IReadOnlyList<RuleJournalEntry> entries, bool requireContiguous)
     {
-        long expected = 1;
+        long previous = 0;
         foreach (RuleJournalEntry entry in entries)
         {
-            if (entry.Sequence != expected++)
+            if (entry.Sequence <= previous || (requireContiguous && entry.Sequence != previous + 1))
             {
                 throw new InvalidDataException("Replay journal sequence is missing or out of order.");
             }
+            previous = entry.Sequence;
+        }
+    }
+
+    private static void ValidateViewCheckpoints(IReadOnlyList<ReplayViewCheckpoint> views)
+    {
+        long previous = -1;
+        foreach (ReplayViewCheckpoint view in views)
+        {
+            if (view.JournalSequence <= previous)
+            {
+                throw new InvalidDataException("Replay view checkpoints are duplicated or out of order.");
+            }
+            previous = view.JournalSequence;
         }
     }
 

@@ -1,6 +1,7 @@
 using CiyuanSha.GameCore.Choices;
 using CiyuanSha.GameCore.Content;
 using CiyuanSha.GameCore.Events;
+using CiyuanSha.GameCore.Domain;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -105,6 +106,59 @@ public sealed class RuleJournal
     }
 }
 
+/// <summary>
+/// Produces a synchronization log that contains public rule progress only.
+/// Accepted private choices, RNG state, full state hashes and hash-chain values
+/// remain host/replay data and are never sent to live spectators or opponents.
+/// </summary>
+public static class RuleJournalVisibility
+{
+    public static RuleJournalDelta Redact(RuleJournalDelta source, ViewerContext viewer)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(viewer);
+        if (viewer.Role == ViewerRole.OmniscientReplay)
+        {
+            return source;
+        }
+
+        RuleJournalEntry[] entries = source.Entries
+            .Where(entry => entry.Kind == JournalEntryKind.RuleEvent)
+            .Select(entry => entry with
+            {
+                StateHash = string.Empty,
+                RuleEvent = entry.RuleEvent is null ? null : RedactEvent(entry.RuleEvent, viewer),
+                ChoiceResult = null,
+                RandomValue = null,
+                Message = string.Empty,
+                PreviousEntryHash = string.Empty,
+                EntryHash = string.Empty
+            })
+            .ToArray();
+        return new RuleJournalDelta(source.FromCursor, source.ToCursor, entries);
+    }
+
+    private static RuleEvent RedactEvent(RuleEvent ruleEvent, ViewerContext viewer)
+    {
+        if (ruleEvent.Payload is not CardMoveRuleEventPayload move)
+        {
+            return ruleEvent;
+        }
+
+        bool isPrivateMove = move.FromZone is CardZone.DrawPile or CardZone.Hand
+            || move.ToZone == CardZone.Hand;
+        bool viewerOwnsCard = viewer.Role == ViewerRole.Player
+            && viewer.SeatId is int seatId
+            && (move.FromSeatId == seatId || move.ToSeatId == seatId);
+        if (!isPrivateMove || viewerOwnsCard)
+        {
+            return ruleEvent;
+        }
+
+        return ruleEvent with { Payload = move with { CardInstanceId = "hidden" } };
+    }
+}
+
 public sealed record ReplayHeader(
     string FormatVersion,
     string EngineApiVersion,
@@ -117,13 +171,20 @@ public sealed record ReplayHeader(
     string InitialStateHash,
     string FinalStateHash,
     bool IsOmniscient,
-    string MatchConfigJson = "");
+    string MatchConfigJson = "",
+    int ViewerSeatId = 0);
 
 public sealed record ReplayPlayerInfo(int SeatId, string DisplayName, string GeneralId);
 
 public sealed record ReplayCheckpoint(long JournalSequence, string StateJson, string StateHash);
 
+public sealed record ReplayViewCheckpoint(long JournalSequence, GameView View);
+
 public sealed record ReplayDocument(
     ReplayHeader Header,
     IReadOnlyList<RuleJournalEntry> Entries,
-    IReadOnlyList<ReplayCheckpoint> Checkpoints);
+    IReadOnlyList<ReplayCheckpoint> Checkpoints,
+    IReadOnlyList<ReplayViewCheckpoint>? ViewCheckpoints = null)
+{
+    public IReadOnlyList<ReplayViewCheckpoint> SafeViewCheckpoints { get; } = ViewCheckpoints ?? Array.Empty<ReplayViewCheckpoint>();
+}

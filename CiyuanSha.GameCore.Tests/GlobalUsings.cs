@@ -1,1 +1,2 @@
-global using CiyuanSha.GameCore.Tests.Framework;
+global using Xunit;
+global using Xunit.Sdk;

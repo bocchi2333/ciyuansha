@@ -68,7 +68,7 @@ internal sealed class PendingOperation
 
     public string OtherCardInstanceId { get; set; } = string.Empty;
 
-    public string SkillId { get; init; } = string.Empty;
+    public string SkillId { get; set; } = string.Empty;
 
     public string EffectId { get; init; } = string.Empty;
 

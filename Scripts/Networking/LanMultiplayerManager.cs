@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Threading.Tasks;
 using CiyuanSha.GameCore.Choices;
 using CiyuanSha.GameCore.Content;
 using CiyuanSha.GameCore.Domain;
@@ -11,6 +13,7 @@ using CiyuanSha.GameCore.Modes;
 using CiyuanSha.GameCore.Networking;
 using CiyuanSha.GameCore.Replay;
 using CiyuanSha.Gameplay.Core;
+using CiyuanSha.Replay;
 using Godot;
 
 namespace CiyuanSha.Networking;
@@ -46,6 +49,9 @@ public partial class LanMultiplayerManager : Node
 
     public BotDifficulty SelectedBotDifficulty { get; private set; } = BotDifficulty.Standard;
 
+    /// <summary>Optional deterministic seed for local testing/repro; zero uses cryptographic randomness.</summary>
+    public ulong MatchSeedOverride { get; set; }
+
     public bool JoinAsSpectator { get; private set; }
 
     public string LocalReconnectToken { get; private set; } = string.Empty;
@@ -70,6 +76,8 @@ public partial class LanMultiplayerManager : Node
     public MatchStateSnapshot? LastMatchStateSnapshot { get; private set; }
 
     public JournalDeltaV2? LastJournalDelta { get; private set; }
+
+    public string LastSavedReplayPath { get; private set; } = string.Empty;
 
     public event Action<LanSessionState>? OnSessionStateChanged;
 
@@ -196,11 +204,28 @@ public partial class LanMultiplayerManager : Node
         CloseSession(clearReconnect: true);
     }
 
+    /// <summary>
+    /// Closes only the current transport while retaining the unguessable seat
+    /// token, room address and journal cursor required by protocol V2 resume.
+    /// </summary>
+    public void DisconnectForReconnect()
+    {
+        if (!IsConnected || IsHost)
+        {
+            return;
+        }
+        CloseSession(clearReconnect: false);
+    }
+
     private void CloseSession(bool clearReconnect)
     {
         _isClosingSession = true;
         try
         {
+            if (!clearReconnect && LastMatchStateSnapshot is not null)
+            {
+                _resumeJournalCursor = Math.Max(_resumeJournalCursor, LastMatchStateSnapshot.JournalCursor);
+            }
             if (Multiplayer.MultiplayerPeer is not null)
             {
                 Multiplayer.MultiplayerPeer.Close();
@@ -209,6 +234,8 @@ public partial class LanMultiplayerManager : Node
 
             _players.Clear();
             _transportPeerAliases.Clear();
+            _envelopeSequences.Clear();
+            _nextClientSequence = 0;
             HostPeerId = 1;
             LastMatchStateSnapshot = null;
             LastJournalDelta = null;
@@ -218,6 +245,7 @@ public partial class LanMultiplayerManager : Node
                 LastJoinAddress = string.Empty;
                 LocalReconnectToken = string.Empty;
                 _reservedSeatTokens.Clear();
+                _resumeJournalCursor = 0;
             }
 
             GameManager.Instance?.EndMatch();
@@ -361,14 +389,18 @@ public partial class LanMultiplayerManager : Node
             ReportNetworkError("Rejected journal synchronization with an invalid seat token.");
             return;
         }
-        RuleJournalDelta? delta = GameManager.Instance?.CoreRuntime?.BuildDelta(afterCursor);
+        ViewerContext viewer = player.IsSpectator
+            ? ViewerContext.Spectator
+            : ViewerContext.ForPlayer(player.SeatId);
+        RuleJournalDelta? delta = GameManager.Instance?.CoreRuntime?.BuildDelta(afterCursor, viewer);
         if (delta is null)
         {
             SendCurrentMatchToPeerIfNeeded(senderId);
             return;
         }
-        string stateHash = GameManager.Instance?.CoreRuntime?.Engine?.State.ComputeCanonicalHash() ?? string.Empty;
-        JournalDeltaV2 response = new(delta.FromCursor, delta.ToCursor, delta.Entries, stateHash);
+        GameView currentView = GameManager.Instance?.CoreRuntime?.BuildView(viewer)
+            ?? throw new InvalidOperationException("GameCore view is unavailable during journal synchronization.");
+        JournalDeltaV2 response = new(delta.FromCursor, delta.ToCursor, delta.Entries, currentView.StateHash, currentView);
         RpcId(GetTransportPeerIdForPlayer(player), MethodName.ReceiveJournalDeltaV2Rpc, JsonSerializer.Serialize(response));
     }
 
@@ -382,6 +414,23 @@ public partial class LanMultiplayerManager : Node
             return;
         }
         LastJournalDelta = delta;
+        LastMatchStateSnapshot ??= new MatchStateSnapshot();
+        LastMatchStateSnapshot.MatchId = delta.CurrentView.MatchId;
+        LastMatchStateSnapshot.ModeId = delta.CurrentView.ModeId;
+        LastMatchStateSnapshot.StateRevision = delta.CurrentView.Revision;
+        LastMatchStateSnapshot.JournalCursor = delta.ToCursor;
+        LastMatchStateSnapshot.StateHash = delta.CurrentView.StateHash;
+        LastMatchStateSnapshot.ViewerRole = JoinAsSpectator ? ViewerRole.Spectator : ViewerRole.Player;
+        LastMatchStateSnapshot.ActiveChoice = delta.CurrentView.PendingChoice;
+        LastMatchStateSnapshot.CoreView = delta.CurrentView;
+        LastMatchStateSnapshot.IsMatchRunning = delta.CurrentView.Status == MatchStatus.Running;
+        LastMatchStateSnapshot.ResultMessage = delta.CurrentView.ResultMessage;
+        _resumeJournalCursor = delta.ToCursor;
+        GameManager.Instance?.ApplyCoreViewSnapshot(delta.CurrentView);
+        if (!IsHost)
+        {
+            RecordLimitedReplay(delta.ToCursor, delta.Entries, delta.CurrentView);
+        }
         ReportNetworkInfo($"Received rule journal delta {delta.FromCursor}..{delta.ToCursor}.");
     }
 
@@ -462,31 +511,8 @@ public partial class LanMultiplayerManager : Node
             return SubmitLobbyCommand(command);
         }
 
-        if (IsHost)
-        {
-            return GameManager.Instance?.TryHandleNetworkPlayCommand(LocalPeerId, command) == true;
-        }
-
-        SubmitChoiceWirePayloadV2 payload = new(null, LocalReconnectToken, command);
-        NetworkEnvelopeV2 envelope = new(
-            ProtocolV2.Version,
-            NetworkMessageKindV2.SubmitChoice,
-            LastMatchStateSnapshot?.MatchId ?? string.Empty,
-            ++_nextClientSequence,
-            JsonSerializer.Serialize(payload));
-        if (OS.IsDebugBuild())
-        {
-            GD.Print($"[network] Sending {command.CommandType} from transport peer {Multiplayer.GetUniqueId()} to host 1.");
-        }
-
-        Error rpcError = RpcId(1, MethodName.SubmitEnvelopeV2Rpc, JsonSerializer.Serialize(envelope));
-        if (rpcError != Error.Ok)
-        {
-            ReportNetworkError($"Failed to submit {command.CommandType} to the host: {rpcError}.");
-            return false;
-        }
-
-        return true;
+        ReportNetworkError("Protocol V2 rejects presentation commands during a match; submit the active ChoiceRequest instead.");
+        return false;
     }
 
     public bool SubmitChoice(ChoiceResult result)
@@ -497,7 +523,10 @@ public partial class LanMultiplayerManager : Node
         }
         if (IsHost)
         {
-            EngineStepResult? step = GameManager.Instance?.SubmitCoreChoice(LocalPeerId, LocalReconnectToken, result);
+            int localSeatId = _players.TryGetValue(LocalPeerId, out LanPlayerInfo? localPlayer)
+                ? localPlayer.SeatId
+                : LocalPeerId;
+            EngineStepResult? step = GameManager.Instance?.SubmitCoreChoice(localSeatId, LocalReconnectToken, result);
             return step is not null && step.Progress != EngineProgress.Rejected;
         }
 
@@ -547,6 +576,19 @@ public partial class LanMultiplayerManager : Node
             return;
         }
 
+        string expectedMatchId = GameManager.Instance?.CoreRuntime?.MatchConfig?.MatchId ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(expectedMatchId)
+            || !string.Equals(envelope.MatchId, expectedMatchId, StringComparison.Ordinal))
+        {
+            ReportNetworkError("Rejected a protocol V2 choice for a different match.");
+            return;
+        }
+        if (!_envelopeSequences.TryAccept(senderId, envelope.ClientSequence, out string sequenceError))
+        {
+            ReportNetworkError($"Rejected protocol V2 envelope: {sequenceError}.");
+            return;
+        }
+
         if (payload.Result is ChoiceResult choice)
         {
             EngineStepResult step = GameManager.Instance?.SubmitCoreChoice(sender.SeatId, payload.ReconnectToken, choice)
@@ -556,18 +598,6 @@ public partial class LanMultiplayerManager : Node
                 ReportNetworkError($"Choice rejected: {step.ErrorKey}.");
             }
             return;
-        }
-
-        // Temporary rendering bridge: old controls still describe the selected
-        // action, but this branch remains host-validated and travels only inside
-        // the V2 SubmitChoice envelope.
-        if (payload.PresentationCommand is NetworkPlayCommand presentationCommand)
-        {
-            bool handled = GameManager.Instance?.TryHandleNetworkPlayCommand(senderId, presentationCommand) == true;
-            if (!handled)
-            {
-                ReportNetworkError("The host rejected an illegal presentation-adapter action.");
-            }
         }
     }
 
@@ -644,6 +674,7 @@ public partial class LanMultiplayerManager : Node
             IsConnected = true,
             IsSpectator = isSpectator
         };
+        _envelopeSequences.Reset(logicalPeerId);
 
         HandshakeResultV2 result = new(true, string.Empty, seatId, seatToken, GameManager.Instance?.CoreRuntime?.Engine?.State.Revision ?? 0);
         RpcId(transportPeerId, MethodName.ReceiveHandshakeResultRpc, JsonSerializer.Serialize(result));
@@ -652,7 +683,7 @@ public partial class LanMultiplayerManager : Node
             ? $"{normalizedName} joined as peer {logicalPeerId}."
             : $"{normalizedName} reconnected to reserved peer {logicalPeerId}.");
         BroadcastLobbySnapshot();
-        SendCurrentMatchToPeerIfNeeded(logicalPeerId);
+        SendCurrentMatchToPeerIfNeeded(logicalPeerId, handshake.JournalCursor);
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
@@ -763,10 +794,14 @@ public partial class LanMultiplayerManager : Node
         }
 
         SetSessionState(LanSessionState.InMatch);
+        if (!IsHost)
+        {
+            _localReplayCapture.Begin(matchStartInfo);
+        }
 
         if (GameManager.Instance is not null)
         {
-            GameManager.Instance.BeginMatch(matchStartInfo.TurnOrder, matchStartInfo.StartingPeerId);
+            GameManager.Instance.BeginCorePresentationMatch(matchStartInfo.TurnOrder, matchStartInfo.StartingPeerId);
         }
     }
 
@@ -788,6 +823,7 @@ public partial class LanMultiplayerManager : Node
         }
 
         LastMatchStateSnapshot = snapshot;
+        _resumeJournalCursor = snapshot.JournalCursor;
         if (snapshot.LobbyPlayers.Count > 0)
         {
             int hostPeerId = snapshot.LobbyPlayers.FirstOrDefault(player => player.IsHost)?.PeerId ?? HostPeerId;
@@ -801,6 +837,10 @@ public partial class LanMultiplayerManager : Node
         }
 
         GameManager.Instance?.ApplyMatchStateSnapshot(snapshot);
+        if (!IsHost && snapshot.CoreView is GameView snapshotView)
+        {
+            RecordLimitedReplay(snapshot.JournalCursor, Array.Empty<RuleJournalEntry>(), snapshotView);
+        }
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = true, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
@@ -843,7 +883,15 @@ public partial class LanMultiplayerManager : Node
 
     private readonly Dictionary<int, string> _reservedSeatTokens = new();
 
+    private readonly EnvelopeSequenceGuard _envelopeSequences = new();
+
+    private readonly LocalReplayCaptureV2 _localReplayCapture = new();
+
+    private bool _hostReplaySaved;
+
     private long _nextClientSequence;
+
+    private long _resumeJournalCursor;
 
     private int _nextBotPeerId = 10000;
 
@@ -875,6 +923,7 @@ public partial class LanMultiplayerManager : Node
         }
 
         _transportPeerAliases.Remove(transportPeerId);
+        _envelopeSequences.Reset(playerInfo.PeerId);
         if (SessionState == LanSessionState.InMatch && !playerInfo.IsHost)
         {
             playerInfo.IsConnected = false;
@@ -998,7 +1047,8 @@ public partial class LanMultiplayerManager : Node
             LocalPlayerName,
             LocalReconnectToken,
             JoinAsSpectator,
-            packs);
+            packs,
+            _resumeJournalCursor);
         RpcId(1, MethodName.RegisterLobbyPlayerRpc, JsonSerializer.Serialize(handshake), LocalCharacterId, false);
         ReportNetworkInfo("Connected to LAN host.");
         SetSessionState(LanSessionState.InLobby);
@@ -1072,10 +1122,11 @@ public partial class LanMultiplayerManager : Node
 
         MatchStateSnapshot hostSnapshot = GameManager.Instance.BuildMatchStateSnapshot(HostPeerId);
         LastMatchStateSnapshot = hostSnapshot;
+        TrySaveHostReplay(hostSnapshot);
 
         foreach (LanPlayerInfo player in _players.Values)
         {
-            if (player.PeerId == HostPeerId || !player.IsConnected)
+            if (player.PeerId == HostPeerId || player.IsBot || !player.IsConnected)
             {
                 continue;
             }
@@ -1100,7 +1151,11 @@ public partial class LanMultiplayerManager : Node
     {
         GameCoreRuntime runtime = GameManager.Instance?.CoreRuntime
             ?? throw new InvalidOperationException("GameCore runtime is unavailable.");
-        ulong seed = BitConverter.ToUInt64(System.Security.Cryptography.RandomNumberGenerator.GetBytes(sizeof(ulong)));
+        _hostReplaySaved = false;
+        LastSavedReplayPath = string.Empty;
+        ulong seed = MatchSeedOverride != 0
+            ? MatchSeedOverride
+            : BitConverter.ToUInt64(System.Security.Cryptography.RandomNumberGenerator.GetBytes(sizeof(ulong)));
         string matchId = Guid.NewGuid().ToString("N");
         MatchConfig coreConfig = runtime.CreateMatchConfig(SelectedModeId, _players.Values, seed, matchId);
         GameManager.Instance?.BeginCoreMatch(coreConfig);
@@ -1135,7 +1190,51 @@ public partial class LanMultiplayerManager : Node
         Rpc(MethodName.BeginMatchRpc, matchStartInfoJson);
     }
 
-    private void SendCurrentMatchToPeerIfNeeded(int peerId)
+    private void RecordLimitedReplay(long cursor, IEnumerable<RuleJournalEntry> entries, GameView view)
+    {
+        try
+        {
+            _localReplayCapture.Record(cursor, entries, view);
+            int seatId = _players.TryGetValue(LocalPeerId, out LanPlayerInfo? local) ? local.SeatId : 0;
+            ViewerContext viewer = JoinAsSpectator ? ViewerContext.Spectator : ViewerContext.ForPlayer(seatId);
+            string? saved = _localReplayCapture.SaveIfCompleted(viewer, _players.Values.ToArray());
+            if (!string.IsNullOrWhiteSpace(saved))
+            {
+                LastSavedReplayPath = saved;
+                ReportNetworkInfo($"Saved limited-view replay: {saved}");
+            }
+        }
+        catch (Exception exception)
+        {
+            ReportNetworkError($"Failed to save limited-view replay: {exception.Message}");
+        }
+    }
+
+    private void TrySaveHostReplay(MatchStateSnapshot snapshot)
+    {
+        if (_hostReplaySaved || snapshot.CoreView?.Status != MatchStatus.Completed
+            || GameManager.Instance?.CoreRuntime is not GameCoreRuntime runtime
+            || runtime.MatchConfig is null)
+        {
+            return;
+        }
+        _hostReplaySaved = true;
+        try
+        {
+            string directory = ProjectSettings.GlobalizePath("user://Replays");
+            Directory.CreateDirectory(directory);
+            LastSavedReplayPath = Path.Combine(directory, $"{runtime.MatchConfig.MatchId}-omniscient.cysreplay");
+            Task.Run(() => runtime.ExportReplayAsync(LastSavedReplayPath, ViewerContext.OmniscientReplay)).GetAwaiter().GetResult();
+            ReportNetworkInfo($"Saved omniscient host replay: {LastSavedReplayPath}");
+        }
+        catch (Exception exception)
+        {
+            _hostReplaySaved = false;
+            ReportNetworkError($"Failed to save host replay: {exception.Message}");
+        }
+    }
+
+    private void SendCurrentMatchToPeerIfNeeded(int peerId, long? requestedCursor = null)
     {
         if (!Multiplayer.IsServer()
             || SessionState != LanSessionState.InMatch
@@ -1145,10 +1244,24 @@ public partial class LanMultiplayerManager : Node
             return;
         }
 
+        GameCoreRuntime runtime = GameManager.Instance.CoreRuntime
+            ?? throw new InvalidOperationException("GameCore runtime is unavailable during match synchronization.");
+        MatchConfig config = runtime.MatchConfig
+            ?? throw new InvalidOperationException("GameCore match configuration is unavailable during synchronization.");
         MatchStartInfo matchStartInfo = new()
         {
-            TurnOrder = _players.Keys.OrderBy(id => id).ToList(),
-            StartingPeerId = GameManager.Instance.CurrentTurnPeerId
+            MatchId = config.MatchId,
+            ModeId = config.ModeId,
+            Seed = config.Seed,
+            ContentPacks = config.ContentPacks.ToList(),
+            TurnOrder = _players.Values
+                .Where(player => !player.IsSpectator && player.SeatId > 0)
+                .OrderBy(player => player.SeatId)
+                .Select(player => player.PeerId)
+                .ToList(),
+            StartingPeerId = _players.Values
+                .FirstOrDefault(player => player.SeatId == runtime.Engine?.State.CurrentSeatId)?.PeerId
+                ?? HostPeerId
         };
         if (!_players.TryGetValue(peerId, out LanPlayerInfo? playerInfo) || !playerInfo.IsConnected)
         {
@@ -1163,11 +1276,22 @@ public partial class LanMultiplayerManager : Node
 
         RpcId(transportPeerId, MethodName.BeginMatchRpc, JsonSerializer.Serialize(matchStartInfo));
 
-        MatchStateSnapshot snapshot = GameManager.Instance.BuildMatchStateSnapshot(peerId);
-        if (playerInfo.IsSpectator)
+        ViewerContext viewer = playerInfo.IsSpectator
+            ? ViewerContext.Spectator
+            : ViewerContext.ForPlayer(playerInfo.SeatId);
+        RuleJournalDelta? delta = requestedCursor is >= 0
+            ? runtime.BuildDelta(requestedCursor.Value, viewer)
+            : null;
+        if (delta is not null)
         {
-            snapshot = GameManager.Instance.BuildMatchStateSnapshot(0);
+            GameView currentView = runtime.BuildView(viewer);
+            JournalDeltaV2 response = new(delta.FromCursor, delta.ToCursor, delta.Entries, currentView.StateHash, currentView);
+            RpcId(transportPeerId, MethodName.ReceiveJournalDeltaV2Rpc, JsonSerializer.Serialize(response));
+            return;
         }
+
+        MatchStateSnapshot snapshot = GameManager.Instance.BuildMatchStateSnapshot(
+            playerInfo.IsSpectator ? 0 : peerId);
         RpcId(transportPeerId, MethodName.ReceiveMatchStateSnapshotRpc, JsonSerializer.Serialize(snapshot));
     }
 

@@ -34,6 +34,14 @@ public sealed class GameView
 
     public required IReadOnlyList<string> PrivateHandCardIds { get; init; }
 
+    /// <summary>
+    /// Card definitions visible only to the owning player, or every hand card
+    /// for an omniscient replay viewer. Spectators and other players receive an
+    /// empty collection. Keeping the metadata in the redacted view lets the UI
+    /// render a hand without reading the authoritative GameState.
+    /// </summary>
+    public required IReadOnlyList<CardView> PrivateHandCards { get; init; }
+
     public required int DrawPileCount { get; init; }
 
     public required int DiscardPileCount { get; init; }

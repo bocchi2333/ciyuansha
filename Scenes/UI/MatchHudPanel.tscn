@@ -1,8 +1,7 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="PackedScene" path="res://Scenes/UI/HandZonePanel.tscn" id="1_hand_zone_panel"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/TargetSelectionPanel.tscn" id="2_target_selection_panel"]
-[ext_resource type="Script" path="res://Scripts/UI/PlayPhaseInputBridge.cs" id="3_play_phase_input_bridge"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/MatchStatusPanel.tscn" id="4_match_status_panel"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/BattleLogPanel.tscn" id="5_battle_log_panel"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/ResponseWindowPanel.tscn" id="6_response_window_panel"]
@@ -17,9 +16,6 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 1
 script = ExtResource("7_cyber_match_hud")
-
-[node name="PlayPhaseInputBridge" type="Node" parent="."]
-script = ExtResource("3_play_phase_input_bridge")
 
 [node name="MatchStatusPanel" parent="." instance=ExtResource("4_match_status_panel")]
 layout_mode = 1
@@ -65,7 +61,6 @@ anchor_bottom = 0.98
 grow_horizontal = 2
 grow_vertical = 2
 z_index = 22
-InputBridgePath = NodePath("../PlayPhaseInputBridge")
 
 [node name="ResponseWindowPanel" parent="." instance=ExtResource("6_response_window_panel")]
 layout_mode = 1

@@ -1,4 +1,5 @@
 using CiyuanSha.GameCore.Content;
+using CiyuanSha.GameCore.Choices;
 using CiyuanSha.GameCore.Networking;
 using CiyuanSha.GameCore.Replay;
 using CiyuanSha.GameCore.AI;
@@ -92,6 +93,33 @@ public sealed class ReplayTests
     }
 
     [Fact]
+    public void Validation_RejectsWrongFormatEngineProtocolAndPackHash()
+    {
+        (ContentRegistry content, _) = TestContent.Load();
+        ContentPackReference[] packs = content.Packs.Values.Select(pack => pack.Reference).OrderBy(pack => pack.PackId, StringComparer.Ordinal).ToArray();
+        ReplayHeader header = new(
+            ReplayArchive.FormatVersion,
+            ProtocolV2.EngineApiVersion,
+            ProtocolV2.Version,
+            "versions",
+            BuiltInModeIds.Duel,
+            1,
+            packs,
+            Array.Empty<ReplayPlayerInfo>(),
+            "initial",
+            "final",
+            true);
+
+        Assert.True(ReplayArchive.ValidateContent(header, packs).IsValid);
+        Assert.False(ReplayArchive.ValidateContent(header with { FormatVersion = "999" }, packs).IsValid);
+        Assert.False(ReplayArchive.ValidateContent(header with { EngineApiVersion = "999" }, packs).IsValid);
+        Assert.False(ReplayArchive.ValidateContent(header with { ProtocolVersion = 999 }, packs).IsValid);
+        Assert.False(ReplayArchive.ValidateContent(header, packs.Select((pack, index) => index == 0
+            ? pack with { ContentHash = new string('0', 64) }
+            : pack).ToArray()).IsValid);
+    }
+
+    [Fact]
     public void Playback_ReexecutesChoicesAndMatchesFinalHash()
     {
         (ContentRegistry content, _) = TestContent.Load();
@@ -109,7 +137,7 @@ public sealed class ReplayTests
         int decisions = 0;
         while (engine.State.Status == MatchStatus.Running && decisions++ < 12000)
         {
-            var request = Assert.NotNull(engine.State.PendingChoice);
+            var request = engine.State.PendingChoice ?? throw new XunitException("Expected a replay choice.");
             GameView view = engine.BuildView(ViewerContext.ForPlayer(request.ActingSeatId));
             var choice = policy.Choose(view, request, new BotContext(BotDifficulty.Standard, config.Seed ^ (ulong)engine.State.Revision));
             EngineStepResult step = engine.Advance(request.ActingSeatId, choice);
@@ -137,5 +165,76 @@ public sealed class ReplayTests
 
         Assert.True(verification.IsValid, $"{verification.ErrorKey} at {verification.DivergentSequence}");
         Assert.Equal(header.FinalStateHash, playback.CurrentView.StateHash);
+    }
+
+    [Fact]
+    public async Task LimitedReplay_ContainsOnlyRedactedEventsAndLockedViewCheckpoints()
+    {
+        (ContentRegistry content, _) = TestContent.Load();
+        string[] generals = content.Generals.Keys.OrderBy(value => value, StringComparer.Ordinal).Take(2).ToArray();
+        MatchConfig config = new(
+            "limited-replay", BuiltInModeIds.Duel, 6621,
+            generals.Select((general, index) => new PlayerConfig(index + 1, $"p{index + 1}", $"P{index + 1}", general)).ToArray(),
+            "standard_military_161",
+            content.Packs.Values.Select(pack => pack.Reference).OrderBy(pack => pack.PackId, StringComparer.Ordinal).ToArray());
+        ViewerContext viewer = ViewerContext.ForPlayer(1);
+        GameEngine engine = GameEngine.Start(config, content);
+        List<ReplayViewCheckpoint> views = new() { new ReplayViewCheckpoint(0, engine.BuildView(viewer)) };
+        DeterministicBotPolicy policy = new();
+        for (int decision = 0; decision < 8 && engine.State.Status == MatchStatus.Running; decision++)
+        {
+            ChoiceRequest request = engine.State.PendingChoice ?? throw new XunitException("Expected a limited replay choice.");
+            ChoiceResult choice = policy.Choose(
+                engine.BuildView(ViewerContext.ForPlayer(request.ActingSeatId)),
+                request,
+                new BotContext(BotDifficulty.Standard, config.Seed ^ (ulong)engine.State.Revision));
+            EngineStepResult step = engine.Advance(request.ActingSeatId, choice);
+            Assert.False(step.Progress is EngineProgress.Rejected or EngineProgress.Faulted, step.ErrorKey);
+            views.Add(new ReplayViewCheckpoint(engine.Journal.Cursor, engine.BuildView(viewer)));
+        }
+        RuleJournalDelta redacted = RuleJournalVisibility.Redact(
+            new RuleJournalDelta(0, engine.Journal.Cursor, engine.Journal.Entries.ToArray()), viewer);
+        ReplayHeader header = new(
+            ReplayArchive.FormatVersion,
+            ProtocolV2.EngineApiVersion,
+            ProtocolV2.Version,
+            config.MatchId,
+            config.ModeId,
+            config.Seed,
+            config.ContentPacks,
+            config.Players.Select(player => new ReplayPlayerInfo(player.SeatId, player.DisplayName, player.GeneralId)).ToArray(),
+            views[0].View.StateHash,
+            views[^1].View.StateHash,
+            false,
+            JsonSerializer.Serialize(config, new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } }),
+            1);
+        ReplayDocument document = new(header, redacted.Entries, Array.Empty<ReplayCheckpoint>(), views);
+        string path = Path.Combine(Path.GetTempPath(), $"ciyuansha-limited-{Guid.NewGuid():N}.cysreplay");
+        try
+        {
+            await ReplayArchive.WriteAsync(path, document);
+            ReplayDocument loaded = await ReplayArchive.ReadAsync(path);
+            Assert.All(loaded.Entries, entry =>
+            {
+                Assert.Equal(JournalEntryKind.RuleEvent, entry.Kind);
+                Assert.Null(entry.ChoiceResult);
+                Assert.Null(entry.RandomValue);
+                Assert.Empty(entry.StateHash);
+                Assert.Empty(entry.EntryHash);
+            });
+            Assert.Empty(loaded.Checkpoints);
+            Assert.NotEmpty(loaded.SafeViewCheckpoints);
+            Assert.All(loaded.SafeViewCheckpoints.SelectMany(checkpoint => checkpoint.View.PrivateHandCards), card => Assert.Equal(1, card.OwnerSeatId));
+
+            ReplayPlaybackSession playback = new(loaded, content);
+            playback.Seek(playback.MaximumCursor);
+            Assert.True(playback.Verify().IsValid);
+            Assert.Equal(1, playback.Viewer.SeatId);
+            Assert.Throws<InvalidOperationException>(() => playback.SetViewer(ViewerContext.OmniscientReplay));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 }

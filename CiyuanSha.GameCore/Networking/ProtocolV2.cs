@@ -37,7 +37,8 @@ public sealed record HandshakeRequestV2(
     string PlayerName,
     string ReconnectToken,
     bool JoinAsSpectator,
-    IReadOnlyList<ContentPackReference> ContentPacks);
+    IReadOnlyList<ContentPackReference> ContentPacks,
+    long JournalCursor = 0);
 
 public sealed record HandshakeResultV2(
     bool Accepted,
@@ -80,7 +81,8 @@ public sealed record JournalDeltaV2(
     long FromCursor,
     long ToCursor,
     IReadOnlyList<RuleJournalEntry> Entries,
-    string StateHash);
+    string StateHash,
+    GameView CurrentView);
 
 public sealed record ProtocolValidationResult(bool IsValid, string ErrorKey)
 {

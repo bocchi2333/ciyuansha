@@ -3,16 +3,18 @@ using System.Text.Json;
 using CiyuanSha.GameCore.Content;
 using CiyuanSha.GameCore.Domain;
 using CiyuanSha.GameCore.Modes;
+using CiyuanSha.GameCore.Networking;
 using CiyuanSha.GameCore.Simulation;
 using CiyuanSha.GameCore.Skills;
 
 int matchesPerCombination = ReadIntArgument(args, "--matches", 20);
 int startIndex = ReadNonNegativeIntArgument(args, "--start-index", 0);
-int maximumDecisions = ReadIntArgument(args, "--max-decisions", 20000);
+int maximumDecisions = ReadIntArgument(args, "--max-decisions", 50000);
 int parallelism = ReadIntArgument(args, "--parallelism", Environment.ProcessorCount);
 string modeFilter = ReadStringArgument(args, "--mode", string.Empty, makeFullPath: false);
 string difficultyFilter = ReadStringArgument(args, "--difficulty", string.Empty, makeFullPath: false);
 string packsRoot = ReadStringArgument(args, "--packs", Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Data", "Packs")));
+string outputPath = ReadStringArgument(args, "--output", string.Empty);
 EffectRegistry effects = BuiltInEffects.CreateRegistry();
 LoadedContentPack[] packs = Directory.GetDirectories(packsRoot)
     .Where(directory => File.Exists(Path.Combine(directory, "manifest.json")))
@@ -77,6 +79,12 @@ SimulationResult[] ordered = results
 var report = new
 {
     GeneratedUtc = DateTimeOffset.UtcNow,
+    EngineApiVersion = ProtocolV2.EngineApiVersion,
+    ProtocolVersion = ProtocolV2.Version,
+    ContentPacks = content.Packs.Values
+        .Select(pack => pack.Reference)
+        .OrderBy(pack => pack.PackId, StringComparer.Ordinal)
+        .ToArray(),
     ModeFilter = modeFilter,
     DifficultyFilter = difficultyFilter,
     MatchesPerModeDifficulty = matchesPerCombination,
@@ -106,7 +114,13 @@ var report = new
         .ToArray(),
     Failures = ordered.Where(result => result.Status != MatchStatus.Completed || result.ErrorKey.Length > 0).ToArray()
 };
-Console.WriteLine(JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+string reportJson = JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true });
+if (!string.IsNullOrWhiteSpace(outputPath))
+{
+    Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? ".");
+    File.WriteAllText(outputPath, reportJson + Environment.NewLine);
+}
+Console.WriteLine(reportJson);
 return report.Faulted == 0 && report.RejectedChoices == 0 && report.Completed == report.Total ? 0 : 1;
 
 static MatchConfig CreateConfig(ContentRegistry content, string mode, BotDifficulty difficulty, int index)

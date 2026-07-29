@@ -28,6 +28,7 @@ public sealed class ReplayPlaybackSession
     private readonly ContentRegistry _content;
     private readonly GameModeRegistry _modes;
     private readonly MatchConfig _config;
+    private readonly IReadOnlyList<ReplayViewCheckpoint> _viewCheckpoints;
     private GameEngine _engine;
 
     public ReplayPlaybackSession(ReplayDocument document, ContentRegistry content, GameModeRegistry? modes = null)
@@ -46,15 +47,32 @@ public sealed class ReplayPlaybackSession
         }
         _config = JsonSerializer.Deserialize<MatchConfig>(document.Header.MatchConfigJson, JsonOptions)
             ?? throw new InvalidDataException("Replay match configuration is invalid.");
+        _viewCheckpoints = document.SafeViewCheckpoints.OrderBy(checkpoint => checkpoint.JournalSequence).ToArray();
+        if (!document.Header.IsOmniscient && _viewCheckpoints.Count == 0)
+        {
+            throw new InvalidDataException("Limited-view replay is missing redacted view checkpoints.");
+        }
+        if (!document.Header.IsOmniscient && _viewCheckpoints[0].JournalSequence != 0)
+        {
+            throw new InvalidDataException("Limited-view replay is missing its initial view checkpoint.");
+        }
         _engine = GameEngine.Start(_config, _content, _modes);
         IsPaused = true;
         Speed = 1;
-        Viewer = document.Header.IsOmniscient ? ViewerContext.OmniscientReplay : ViewerContext.Spectator;
+        Viewer = document.Header.IsOmniscient
+            ? ViewerContext.OmniscientReplay
+            : document.Header.ViewerSeatId > 0
+                ? ViewerContext.ForPlayer(document.Header.ViewerSeatId)
+                : ViewerContext.Spectator;
     }
 
     public long Cursor { get; private set; }
 
-    public long MaximumCursor => _document.Entries.LastOrDefault()?.Sequence ?? 0;
+    public ReplayHeader Header => _document.Header;
+
+    public long MaximumCursor => Math.Max(
+        _document.Entries.LastOrDefault()?.Sequence ?? 0,
+        _viewCheckpoints.LastOrDefault()?.JournalSequence ?? 0);
 
     public bool IsPaused { get; private set; }
 
@@ -64,7 +82,9 @@ public sealed class ReplayPlaybackSession
 
     public RuleJournalEntry? CurrentEntry => _document.Entries.LastOrDefault(entry => entry.Sequence <= Cursor);
 
-    public GameView CurrentView => _engine.BuildView(Viewer);
+    public GameView CurrentView => _document.Header.IsOmniscient
+        ? _engine.BuildView(Viewer)
+        : _viewCheckpoints.Last(checkpoint => checkpoint.JournalSequence <= Cursor).View;
 
     public void Play() => IsPaused = false;
 
@@ -82,6 +102,10 @@ public sealed class ReplayPlaybackSession
     public void SetViewer(ViewerContext viewer)
     {
         ArgumentNullException.ThrowIfNull(viewer);
+        if (!_document.Header.IsOmniscient && viewer != Viewer)
+        {
+            throw new InvalidOperationException("A limited-view replay is locked to its recorded viewer.");
+        }
         if (!_document.Header.IsOmniscient && viewer.Role == ViewerRole.OmniscientReplay)
         {
             throw new InvalidOperationException("This replay does not contain an omniscient view.");
@@ -136,6 +160,11 @@ public sealed class ReplayPlaybackSession
         {
             throw new ArgumentOutOfRangeException(nameof(journalSequence));
         }
+        if (!_document.Header.IsOmniscient)
+        {
+            Cursor = journalSequence;
+            return;
+        }
         _engine = GameEngine.Start(_config, _content, _modes);
         foreach (RuleJournalEntry entry in _document.Entries.Where(entry => entry.Sequence <= journalSequence && entry.Kind == JournalEntryKind.ChoiceAccepted))
         {
@@ -154,6 +183,14 @@ public sealed class ReplayPlaybackSession
 
     public ReplayVerificationResult Verify()
     {
+        if (!_document.Header.IsOmniscient)
+        {
+            ReplayViewCheckpoint finalView = _viewCheckpoints[^1];
+            return finalView.JournalSequence == MaximumCursor
+                && string.Equals(finalView.View.StateHash, _document.Header.FinalStateHash, StringComparison.OrdinalIgnoreCase)
+                    ? ReplayVerificationResult.Valid
+                    : new ReplayVerificationResult(false, "replay.limited_view_hash_mismatch", finalView.JournalSequence);
+        }
         try
         {
             Seek(MaximumCursor);

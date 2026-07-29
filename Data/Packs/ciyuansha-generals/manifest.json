@@ -5,7 +5,7 @@
   "EngineApiVersion": "2.0.0",
   "License": "GPL-3.0-only",
   "Attribution": "CiyuanSha original character content",
-  "ContentHash": "b2314deba43996198a7c069ba1b5f7a8fe271d379b5fbb3c4fb3f17fbd0e276a",
+  "ContentHash": "f30dae124c64643282c0c024f9f690b7ada503a1c77892e2bc890d1a452e82b9",
   "Dependencies": [ { "PackId": "core-rules", "MinimumVersion": "2.0.0" } ],
   "ContentFiles": [ "generals-and-skills.json" ]
 }

@@ -1,76 +1,95 @@
 # GameCore V2 固定种子模拟验收报告（2026-07-30）
 
-## 正式长跑
+## 验收口径
 
-本地单命令外层有 60 分钟壁钟，因此按模式/难度拆成 12 个独立分片。每个分片使用相同的固定种子公式、内容包和
-20000 决策上限；拆分只改变任务调度，不改变对局输入。例如：
+- 引擎 API：`2.0.0`
+- 网络协议：`2`
+- 每个“模式 × AI 难度”固定运行 1000 局，共 `4 × 3 × 1000 = 12000` 局。
+- AI 搜索使用固定节点预算；单局模拟安全上限为 50000 次合法选择，不使用墙钟改变搜索结果。
+- 通过条件：全部对局正常结束、零引擎 fault、零非法/被拒绝 AI 选择、12 名武将均至少出场 20 次。
 
-```powershell
-dotnet run --project CiyuanSha.GameCore.Simulations/CiyuanSha.GameCore.Simulations.csproj -c Release --no-build -- --matches 1000 --mode identity --difficulty Hard --parallelism 10 --max-decisions 20000
-```
+内容包哈希：
 
-| 模式 | 难度 | 完成 | fault | 拒绝选择 | 最大决策数 |
-| --- | --- | ---: | ---: | ---: | ---: |
-| `duel` | Easy | 1000 | 0 | 0 | 285 |
-| `duel` | Standard | 1000 | 0 | 0 | 2066 |
-| `duel` | Hard | 1000 | 0 | 0 | 1154 |
-| `identity` | Easy | 1000 | 0 | 0 | 483 |
-| `identity` | Standard | 1000 | 0 | 0 | 7132 |
-| `identity` | Hard | 1000 | 0 | 0 | 5566 |
-| `team_2v2` | Easy | 1000 | 0 | 0 | 540 |
-| `team_2v2` | Standard | 1000 | 0 | 0 | 17598 |
-| `team_2v2` | Hard | 1000 | 0 | 0 | 18778 |
-| `boss_pve` | Easy | 1000 | 0 | 0 | 549 |
-| `boss_pve` | Standard | 1000 | 0 | 0 | 2167 |
-| `boss_pve` | Hard | 1000 | 0 | 0 | 1778 |
+| 内容包 | 版本 | SHA-256 |
+| --- | --- | --- |
+| `ciyuansha-boss` | 2.0.0 | `a78609fa5a21ac0cdc594ae098948ea4db7bd8bea638a7d0297dc54d115767d5` |
+| `ciyuansha-generals` | 2.0.0 | `f30dae124c64643282c0c024f9f690b7ada503a1c77892e2bc890d1a452e82b9` |
+| `core-rules` | 2.0.0 | `6421282a15d8b1663747f318466059f71816d5be93afb3961eab6869b8e745ad` |
+| `military-cards` | 2.0.0 | `59db7e376de74c18bbe7b540f05ac5793b006823f8bc0efd153b47a988a9e22a` |
+| `standard-cards` | 2.0.0 | `2e83ba4876095233f5f885aba827b1e66116ed2200ff66669ee0c305172aeb6e` |
 
-汇总：12000/12000 正常结束，`Faulted=0`，`RejectedChoices=0`。所有组合均未达到 20000 决策上限。
+## 正式长跑结果
 
-分片确定性摘要：
+| 模式 | 难度 | 完成 | fault | 拒绝选择 | 最大决策数 | 确定性摘要 |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| `duel` | Easy | 1000 | 0 | 0 | 584 | `4e0d2be138f3643b49c9c9c356259d290262bc5d2d7778f6a3999e45ed302649` |
+| `duel` | Standard | 1000 | 0 | 0 | 2066 | `7a8c50acfb79d3c51be187be801144da542a6eecc8fd7ffb1b126e46b2411c4a` |
+| `duel` | Hard | 1000 | 0 | 0 | 1266 | `091a1b56ce82ea2aec79fe670e6fc511a646ce6cedca8e978acf93c10416e870` |
+| `identity` | Easy | 1000 | 0 | 0 | 1382 | `a628ce5cb2d885d4c9fdb71d8071c5f6e17a74ae7daa4dc6d6bd923b52e2ae48` |
+| `identity` | Standard | 1000 | 0 | 0 | 7427 | `d9542582afee5052055cb41805befe037dea2f13c89fe3c9960eb9516a29a95c` |
+| `identity` | Hard | 1000 | 0 | 0 | 8854 | `8a995f913d4da3bf6376228157796ce91086d995fa0071015a3cc4ae5059cbd2` |
+| `team_2v2` | Easy | 1000 | 0 | 0 | 1965 | `35a706f72bca62cddd74629f2515e581dce0d4b0998914d9712270ecf716460d` |
+| `team_2v2` | Standard | 1000 | 0 | 0 | 34619 | `905124a916cd0de18c2e1a5cf26826400fcd942e56d5135818fae2b8921e73f5` |
+| `team_2v2` | Hard | 1000 | 0 | 0 | 11093 | `2816e2568b2419df4daae041e61e11912d1e2542f93407d7454cd573f634d08a` |
+| `boss_pve` | Easy | 1000 | 0 | 0 | 893 | `024de52b9c636426a087678ea1bf98fab8025ee7058612277e8df470606e9ddb` |
+| `boss_pve` | Standard | 1000 | 0 | 0 | 2498 | `41ee724b796de3439c9570e37b9293f29e2a3950c18ed11f38ccf5b801ad6330` |
+| `boss_pve` | Hard | 1000 | 0 | 0 | 2428 | `a8c9d1f0c945ce1b266fe748796de4a3d4701c348144bec24bf045c0b2ea6a89` |
 
-| 组合 | SHA-256 摘要 |
-| --- | --- |
-| `duel/Easy` | `0a8a1ac05b88f2acb192a3073fe38ea84a18290499d5cb2ff88b4bee37cc06e3` |
-| `duel/Standard` | `f9f024fd04385f716b0445a815fe09485b62b46dbb37846374b5a2e21d32200c` |
-| `duel/Hard` | `d4db849fd22fa5f974068483aeb8c412a324548cb911b6e72b7e475cd7e0abd3` |
-| `identity/Easy` | `d683aa0900536c05d767b280931916faea26b87401d181f9999dd932c1f420f9` |
-| `identity/Standard` | `f0c13db0a886bc9f1fac1619fd2cd3929a63e16a8c951d0f75a23d6aaa2c74cd` |
-| `identity/Hard` | `c5da844a7d46fc3bcdb21b1361b8c895a2313a185dbf6a24589b376e18fdd104` |
-| `team_2v2/Easy` | `7966d8970e6b6e1c770b04e4ffbce684676a84369ce34d597d629443dfee8a38` |
-| `team_2v2/Standard` | `2b72609bdc8f73b7073e13a42240ad6a18e141becaeb39faa2b5ae1435d20829` |
-| `team_2v2/Hard` | `64b357a231207102e4233b3a199671432182995088c87dd8320b3d19f679db8f` |
-| `boss_pve/Easy` | `0c22ec722ab37de61b0912374b46432ba72a37db7f20424c798f1a2c33ac9010` |
-| `boss_pve/Standard` | `65cffca65ebc54810ba48501b8f8636715f03458747a784423c2d8a1cf372c87` |
-| `boss_pve/Hard` | `3146f3f0f263ef7f46110cf0f419a9f35ed8233c14c7be6f1b296d04be818db4` |
+汇总：`12000/12000` 正常结束，`Faulted=0`，`RejectedChoices=0`；套件摘要为
+`4fc70ab53c4c1282747fcaec3614e6890ca09d20f46cd8a35a03393a37cfba17`。
 
-`team_2v2/Standard` 和 `team_2v2/Hard` 的尾部长局分别达到 17598 和 18778 决策，仍在 20000 固定预算内。
-后续增加卡包时必须继续观察这两个组合；不能用墙钟截断来隐藏长局。
+`team_2v2/Standard` 存在两个确定性的极端长局，分别在 21445 和 34619 次选择正常结束。它们在 10 万预算定向复现中持续推进且正常产生胜者，不是状态循环或死锁；因此正式安全上限固定为 50000。该上限只约束整局模拟，不改变困难 AI 的固定搜索节点预算。
 
-## 快速确定性矩阵
+原始汇总位于 `Build/SimulationAcceptance/formal-20260730-071720/summary.json`，12 个分片 JSON 和标准输出位于同一目录。`Build/` 是本机验收产物，不进入源码提交。
 
-在 Debug 和 Release 下分别运行 4 模式 × 3 难度 × 20 局，两次结果一致：
-
-- 每次共 240 局
-- 正常结束：240
-- 异常：0
-- 被内核拒绝的 AI 选择：0
-- 单局最大决策数：4774
-- Debug/Release 确定性摘要：`4ea0f401402c567c6ab62deeff038a7f90c029f4771dd74e858c6bc7117b2225`
+## 武将覆盖
 
 | 武将 ID | 出场次数 |
 | --- | ---: |
-| `chenchen` | 54 |
-| `funingna` | 69 |
-| `hanfeiyang` | 69 |
-| `huanglubaiquan` | 54 |
-| `jiefeng` | 66 |
-| `jifenxin` | 126 |
-| `leixi` | 51 |
-| `lishengming` | 66 |
-| `luoxingye` | 60 |
-| `shenyuebai` | 45 |
-| `sujinglan` | 60 |
-| `xingjianya` | 60 |
+| `chenchen` | 2505 |
+| `funingna` | 3255 |
+| `hanfeiyang` | 3255 |
+| `huanglubaiquan` | 2505 |
+| `jiefeng` | 3249 |
+| `jifenxin` | 6249 |
+| `leixi` | 2499 |
+| `lishengming` | 3249 |
+| `luoxingye` | 3246 |
+| `shenyuebai` | 2496 |
+| `sujinglan` | 3246 |
+| `xingjianya` | 3246 |
 
-12 名武将均在快速矩阵中出场不少于 45 次；正式分片按武将 ID 轮转，每个非 Boss 组合中每名约出场 166–334 次。
-执行和复现参数见 [`testing-gamecore-v2.md`](testing-gamecore-v2.md)。
+所有武将远高于“至少 20 局固定种子对局”门槛。
+
+## Debug/Release 确定性快检
+
+Debug 与 Release 各运行 240 局（4 模式 × 3 难度 × 20 局），两者结果一致：
+
+- 完成：`240/240`
+- fault：`0`
+- 拒绝选择：`0`
+- 最大决策数：`1928`
+- 相同摘要：`9280877bc5e76566a7569a2d9f90a54bc717e43f35e7ac7df68e98cf62ef1ad0`
+- 12 名武将最少出场：`45`
+
+原始报告：`Build/SimulationAcceptance/debug-20.json` 与
+`Build/SimulationAcceptance/release-20.json`。
+
+## 复现命令
+
+```powershell
+& ./Scripts/Test/RunSimulationAcceptance.ps1 `
+  -MatchesPerCombination 1000 `
+  -ParallelismPerShard 2 `
+  -MaximumDecisions 50000
+```
+
+只重新汇总已完成分片：
+
+```powershell
+& ./Scripts/Test/RunSimulationAcceptance.ps1 `
+  -MatchesPerCombination 1000 `
+  -MaximumDecisions 50000 `
+  -ExistingRunRoot ./Build/SimulationAcceptance/formal-20260730-071720 `
+  -NoBuild
+```

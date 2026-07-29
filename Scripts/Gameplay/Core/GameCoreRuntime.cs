@@ -34,6 +34,7 @@ public sealed class GameCoreRuntime
     private readonly DeterministicBotPolicy _botPolicy = new();
     private readonly GameModeRegistry _modes = new();
     private string _initialStateHash = string.Empty;
+    private bool _faultBundleWritten;
 
     private GameCoreRuntime(ContentRegistry content, EffectRegistry effects, string packsRoot)
     {
@@ -60,6 +61,8 @@ public sealed class GameCoreRuntime
         .ToArray();
 
     public bool IsRunning => Engine?.State.Status == MatchStatus.Running;
+
+    public string LastReproductionBundlePath { get; private set; } = string.Empty;
 
     public static GameCoreRuntime LoadDefault()
     {
@@ -149,21 +152,23 @@ public sealed class GameCoreRuntime
     public EngineStepResult Start(MatchConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
-        Engine = GameEngine.Start(config, Content, _modes);
+        Engine = GameEngine.Start(config, Content, _modes, Effects);
         MatchConfig = config;
         _initialStateHash = Engine.State.ComputeCanonicalHash();
+        _faultBundleWritten = false;
+        LastReproductionBundlePath = string.Empty;
         _seatTokens.Clear();
         foreach (PlayerConfig player in config.Players.Where(player => player.Controller == SeatController.Human))
         {
             _seatTokens[player.SeatId] = ReconnectTokenFactory.Create();
         }
 
-        return AdvanceBots(new EngineStepResult(
+        return CaptureFaultIfNeeded(AdvanceBots(new EngineStepResult(
             Engine.State.PendingChoice is null ? EngineProgress.Progressed : EngineProgress.WaitingForChoice,
             Engine.State.Revision,
             Array.Empty<RuleEvent>(),
             Engine.State.PendingChoice,
-            Engine.State.ComputeCanonicalHash()));
+            Engine.State.ComputeCanonicalHash())));
     }
 
     public EngineStepResult SubmitChoice(int seatId, string reconnectToken, ChoiceResult result)
@@ -178,7 +183,7 @@ public sealed class GameCoreRuntime
             return Rejected("network.invalid_reconnect_token");
         }
 
-        return AdvanceBots(Engine.Advance(seatId, result));
+        return CaptureFaultIfNeeded(AdvanceBots(Engine.Advance(seatId, result)));
     }
 
     public GameView BuildView(ViewerContext viewer) =>
@@ -190,7 +195,11 @@ public sealed class GameCoreRuntime
         Engine?.Journal.Cursor ?? 0,
         BuildView(viewer));
 
-    public RuleJournalDelta? BuildDelta(long afterCursor) => Engine?.BuildDelta(afterCursor);
+    public RuleJournalDelta? BuildDelta(long afterCursor, ViewerContext viewer)
+    {
+        RuleJournalDelta? delta = Engine?.BuildDelta(afterCursor);
+        return delta is null ? null : RuleJournalVisibility.Redact(delta, viewer);
+    }
 
     public bool TryResumeSeat(int seatId, string token) =>
         _seatTokens.TryGetValue(seatId, out string? expected)
@@ -207,9 +216,25 @@ public sealed class GameCoreRuntime
 
     public async Task ExportReplayAsync(string path, bool omniscient, CancellationToken cancellationToken = default)
     {
+        await ExportReplayAsync(
+            path,
+            omniscient ? ViewerContext.OmniscientReplay : ViewerContext.Spectator,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task ExportReplayAsync(string path, ViewerContext viewer, CancellationToken cancellationToken = default)
+    {
         if (Engine is null || MatchConfig is null)
         {
             throw new InvalidOperationException("No match is available to export.");
+        }
+
+        ArgumentNullException.ThrowIfNull(viewer);
+        if (viewer.Role != ViewerRole.OmniscientReplay)
+        {
+            ReplayDocument limited = BuildLimitedReplay(viewer);
+            await ReplayArchive.WriteAsync(path, limited, cancellationToken).ConfigureAwait(false);
+            return;
         }
 
         string finalHash = Engine.State.ComputeCanonicalHash();
@@ -224,12 +249,70 @@ public sealed class GameCoreRuntime
             MatchConfig.Players.Select(player => new ReplayPlayerInfo(player.SeatId, player.DisplayName, player.GeneralId)).ToArray(),
             _initialStateHash,
             finalHash,
-            omniscient,
+            true,
             JsonSerializer.Serialize(MatchConfig, ReplayJsonOptions));
         string stateJson = JsonSerializer.Serialize(Engine.State, ReplayJsonOptions);
         ReplayCheckpoint checkpoint = new(Engine.Journal.Cursor, stateJson, finalHash);
         ReplayDocument document = new(header, Engine.Journal.Entries.ToArray(), new[] { checkpoint });
-        await ReplayArchive.WriteAsync(path, document, cancellationToken);
+        await ReplayArchive.WriteAsync(path, document, cancellationToken).ConfigureAwait(false);
+    }
+
+    private ReplayDocument BuildLimitedReplay(ViewerContext viewer)
+    {
+        if (Engine is null || MatchConfig is null)
+        {
+            throw new InvalidOperationException("No match is available to export.");
+        }
+        if (viewer.Role == ViewerRole.Player
+            && (viewer.SeatId is null || MatchConfig.Players.All(player => player.SeatId != viewer.SeatId)))
+        {
+            throw new ArgumentOutOfRangeException(nameof(viewer), "Replay player seat is unknown.");
+        }
+
+        GameEngine replayEngine = GameEngine.Start(MatchConfig, Content, _modes, Effects);
+        List<ReplayViewCheckpoint> views = new() { new ReplayViewCheckpoint(0, replayEngine.BuildView(viewer)) };
+        foreach (RuleJournalEntry accepted in Engine.Journal.Entries.Where(entry => entry.Kind == JournalEntryKind.ChoiceAccepted))
+        {
+            if (accepted.ChoiceResult is null || replayEngine.State.PendingChoice is null)
+            {
+                throw new InvalidDataException($"Cannot build limited replay at journal sequence {accepted.Sequence}.");
+            }
+            EngineStepResult step = replayEngine.Advance(replayEngine.State.PendingChoice.ActingSeatId, accepted.ChoiceResult);
+            if (step.Progress is EngineProgress.Rejected or EngineProgress.Faulted)
+            {
+                throw new InvalidDataException($"Limited replay diverged at journal sequence {accepted.Sequence}: {step.ErrorKey}.");
+            }
+            long cursor = replayEngine.Journal.Cursor;
+            if (views[^1].JournalSequence != cursor)
+            {
+                views.Add(new ReplayViewCheckpoint(cursor, replayEngine.BuildView(viewer)));
+            }
+        }
+
+        if (views[^1].JournalSequence != Engine.Journal.Cursor)
+        {
+            views.Add(new ReplayViewCheckpoint(Engine.Journal.Cursor, replayEngine.BuildView(viewer)));
+        }
+        GameView initialView = views[0].View;
+        GameView finalView = views[^1].View;
+        ReplayHeader header = new(
+            ReplayArchive.FormatVersion,
+            ProtocolV2.EngineApiVersion,
+            ProtocolV2.Version,
+            MatchConfig.MatchId,
+            MatchConfig.ModeId,
+            MatchConfig.Seed,
+            MatchConfig.ContentPacks,
+            MatchConfig.Players.Select(player => new ReplayPlayerInfo(player.SeatId, player.DisplayName, player.GeneralId)).ToArray(),
+            initialView.StateHash,
+            finalView.StateHash,
+            false,
+            JsonSerializer.Serialize(MatchConfig, ReplayJsonOptions),
+            viewer.Role == ViewerRole.Player ? viewer.SeatId ?? 0 : 0);
+        RuleJournalDelta publicJournal = RuleJournalVisibility.Redact(
+            new RuleJournalDelta(0, Engine.Journal.Cursor, Engine.Journal.Entries.ToArray()),
+            viewer);
+        return new ReplayDocument(header, publicJournal.Entries, Array.Empty<ReplayCheckpoint>(), views);
     }
 
     public async Task ExportReproductionBundleAsync(string path, Exception? exception = null, CancellationToken cancellationToken = default)
@@ -246,16 +329,16 @@ public sealed class GameCoreRuntime
         }
         await using FileStream file = new(path, FileMode.Create, System.IO.FileAccess.Write, FileShare.None);
         using ZipArchive archive = new(file, ZipArchiveMode.Create, leaveOpen: true);
-        await WriteZipJsonAsync(archive, "match-config.json", MatchConfig, cancellationToken);
-        await WriteZipJsonAsync(archive, "state.json", Engine.State, cancellationToken);
-        await WriteZipJsonAsync(archive, "journal-tail.json", Engine.Journal.Entries.TakeLast(128).ToArray(), cancellationToken);
+        await WriteZipJsonAsync(archive, "match-config.json", MatchConfig, cancellationToken).ConfigureAwait(false);
+        await WriteZipJsonAsync(archive, "state.json", Engine.State, cancellationToken).ConfigureAwait(false);
+        await WriteZipJsonAsync(archive, "journal-tail.json", Engine.Journal.Entries.TakeLast(128).ToArray(), cancellationToken).ConfigureAwait(false);
         await WriteZipJsonAsync(archive, "fault.json", new
         {
             EngineVersion = ProtocolV2.EngineApiVersion,
             StateHash = Engine.State.ComputeCanonicalHash(),
             JournalCursor = Engine.Journal.Cursor,
             Exception = exception?.ToString() ?? Engine.State.ResultMessage
-        }, cancellationToken);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private EngineStepResult AdvanceBots(EngineStepResult current)
@@ -293,6 +376,30 @@ public sealed class GameCoreRuntime
         Engine?.State.ComputeCanonicalHash() ?? string.Empty,
         errorKey);
 
+    private EngineStepResult CaptureFaultIfNeeded(EngineStepResult step)
+    {
+        if (step.Progress != EngineProgress.Faulted || _faultBundleWritten || MatchConfig is null)
+        {
+            return step;
+        }
+
+        _faultBundleWritten = true;
+        try
+        {
+            string directory = ProjectSettings.GlobalizePath("user://Reproductions");
+            string safeMatchId = string.Concat(MatchConfig.MatchId.Where(character => char.IsLetterOrDigit(character) || character is '-' or '_'));
+            if (string.IsNullOrWhiteSpace(safeMatchId)) safeMatchId = "match";
+            LastReproductionBundlePath = Path.Combine(directory, $"{safeMatchId}-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}.cysrepro");
+            Task.Run(() => ExportReproductionBundleAsync(LastReproductionBundlePath)).GetAwaiter().GetResult();
+            GD.PushError($"GameCore fault reproduction bundle: {LastReproductionBundlePath}");
+        }
+        catch (Exception exportException)
+        {
+            GD.PushError($"GameCore fault bundle export failed: {exportException.Message}");
+        }
+        return step;
+    }
+
     private string ResolveGeneralId(string requested)
     {
         if (!string.IsNullOrWhiteSpace(requested) && Content.Generals.ContainsKey(requested))
@@ -306,7 +413,7 @@ public sealed class GameCoreRuntime
     {
         ZipArchiveEntry entry = archive.CreateEntry(name, CompressionLevel.SmallestSize);
         await using Stream stream = entry.Open();
-        await JsonSerializer.SerializeAsync(stream, value, ReplayJsonOptions, cancellationToken);
+        await JsonSerializer.SerializeAsync(stream, value, ReplayJsonOptions, cancellationToken).ConfigureAwait(false);
     }
 
     private static readonly JsonSerializerOptions ReplayJsonOptions = new()

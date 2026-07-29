@@ -113,6 +113,16 @@ public sealed class ResolutionStack
         _roots.Enqueue(frame);
     }
 
+    public void EnqueueAfterCurrent(ResolutionFrame frame)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        if (_frames.Count == 0)
+        {
+            throw new InvalidOperationException("There is no active resolution frame.");
+        }
+        _frames.Peek().After.Enqueue(frame);
+    }
+
     public ResolutionStep Advance(ChoiceResult? submittedChoice = null)
     {
         if (++_steps > MaximumSteps)
@@ -210,6 +220,10 @@ public sealed class ResolutionStack
 
     private void PushChild(ResolutionFrame child, int depth)
     {
+        if (string.IsNullOrWhiteSpace(child.Event.ParentEventId) && _frames.Count > 0)
+        {
+            child.Event = child.Event with { ParentEventId = _frames.Peek().Event.EventId };
+        }
         child.Depth = depth;
         _frames.Push(child);
     }

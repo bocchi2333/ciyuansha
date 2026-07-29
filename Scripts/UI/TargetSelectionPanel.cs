@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using CiyuanSha.GameCore.Choices;
+using CiyuanSha.GameCore.Domain;
 using CiyuanSha.Gameplay.Cards;
 using CiyuanSha.Gameplay.Characters;
 using CiyuanSha.Gameplay.Core;
@@ -30,6 +32,7 @@ public partial class TargetSelectionPanel : Control
     private Label? _statusLabel;
     private ColorRect? _targetStateLine;
     private readonly List<int> _selectedMultiTargetPeerIds = new();
+    private readonly HashSet<string> _selectedCoreOptions = new(StringComparer.Ordinal);
 
     public override void _Ready()
     {
@@ -52,6 +55,7 @@ public partial class TargetSelectionPanel : Control
             GameManager.Instance.OnStateSyncRequested += HandleGameStateChanged;
             GameManager.Instance.OnTurnOwnerChanged += HandleTurnOwnerChanged;
             GameManager.Instance.OnPhaseChanged += HandlePhaseChanged;
+            GameManager.Instance.OnCoreEngineAdvanced += HandleCoreAdvanced;
         }
 
         RefreshTargets();
@@ -74,6 +78,7 @@ public partial class TargetSelectionPanel : Control
             GameManager.Instance.OnStateSyncRequested -= HandleGameStateChanged;
             GameManager.Instance.OnTurnOwnerChanged -= HandleTurnOwnerChanged;
             GameManager.Instance.OnPhaseChanged -= HandlePhaseChanged;
+            GameManager.Instance.OnCoreEngineAdvanced -= HandleCoreAdvanced;
         }
     }
 
@@ -87,6 +92,12 @@ public partial class TargetSelectionPanel : Control
         foreach (Node child in _targetsContainer.GetChildren())
         {
             child.QueueFree();
+        }
+
+        if (GameManager.Instance?.IsCoreMatchActive == true)
+        {
+            RefreshCoreTargetChoice();
+            return;
         }
 
         int localPeerId = LanMultiplayerManager.Instance?.IsConnected == true
@@ -276,6 +287,99 @@ public partial class TargetSelectionPanel : Control
             _targetsContainer.AddChild(recastButton);
         }
     }
+
+    private void RefreshCoreTargetChoice()
+    {
+        if (_targetsContainer is null) return;
+        ChoiceRequest? request = ResolveLocalCoreChoice();
+        if (request?.Kind != ChoiceKind.SelectTarget)
+        {
+            _selectedCoreOptions.Clear();
+            SetStatus("目标选择由规则内核发布；当前没有需要你选择的目标。");
+            UpdateTargetStateLine(false, false, false, 0, 1);
+            return;
+        }
+
+        _selectedCoreOptions.RemoveWhere(optionId => request.Options.All(option => option.OptionId != optionId));
+        SetStatus($"{request.PromptKey}\n请选择 {request.MinimumSelections}–{request.MaximumSelections} 个合法目标。");
+        UpdateTargetStateLine(true, true, request.MaximumSelections > 1, _selectedCoreOptions.Count, request.MaximumSelections);
+        foreach (ChoiceOption option in request.Options)
+        {
+            bool selected = _selectedCoreOptions.Contains(option.OptionId);
+            Button button = new()
+            {
+                Text = selected ? $"✓ {CoreOptionText(option)}" : CoreOptionText(option),
+                CustomMinimumSize = new Vector2(190f, 54f),
+                Disabled = !option.IsEnabled,
+                TooltipText = option.IsEnabled ? option.EntityId : option.DisabledReasonKey,
+                ToggleMode = request.MaximumSelections > 1,
+                ButtonPressed = selected
+            };
+            CyberStyle.ApplyButton(button, selected ? CyberButtonKind.Primary : CyberButtonKind.Action);
+            CyberStyle.AttachHoverLift(button);
+            button.Pressed += () => SelectCoreTarget(request, option.OptionId);
+            _targetsContainer.AddChild(button);
+        }
+
+        if (request.MaximumSelections > 1)
+        {
+            Button confirm = new()
+            {
+                Text = $"确认目标 ({_selectedCoreOptions.Count}/{request.MaximumSelections})",
+                CustomMinimumSize = new Vector2(190f, 46f),
+                Disabled = _selectedCoreOptions.Count < request.MinimumSelections || _selectedCoreOptions.Count > request.MaximumSelections
+            };
+            CyberStyle.ApplyButton(confirm, CyberButtonKind.Primary);
+            confirm.Pressed += () => SubmitCoreTargets(request);
+            _targetsContainer.AddChild(confirm);
+        }
+        if (request.AllowCancel)
+        {
+            Button cancel = new() { Text = "取消选择", CustomMinimumSize = new Vector2(190f, 42f) };
+            CyberStyle.ApplyButton(cancel, CyberButtonKind.Danger);
+            cancel.Pressed += () => LanMultiplayerManager.Instance?.SubmitChoice(ChoiceResult.Cancel(request.RequestId, request.StateRevision));
+            _targetsContainer.AddChild(cancel);
+        }
+    }
+
+    private void SelectCoreTarget(ChoiceRequest request, string optionId)
+    {
+        if (request.MaximumSelections == 1)
+        {
+            LanMultiplayerManager.Instance?.SubmitChoice(ChoiceResult.Select(request.RequestId, request.StateRevision, optionId));
+            return;
+        }
+        if (!_selectedCoreOptions.Add(optionId)) _selectedCoreOptions.Remove(optionId);
+        else if (_selectedCoreOptions.Count > request.MaximumSelections) _selectedCoreOptions.Remove(optionId);
+        RefreshTargets();
+    }
+
+    private void SubmitCoreTargets(ChoiceRequest request)
+    {
+        if (_selectedCoreOptions.Count < request.MinimumSelections || _selectedCoreOptions.Count > request.MaximumSelections) return;
+        LanMultiplayerManager.Instance?.SubmitChoice(new ChoiceResult(
+            request.RequestId,
+            request.StateRevision,
+            _selectedCoreOptions.OrderBy(value => value, StringComparer.Ordinal).ToArray()));
+    }
+
+    private static string CoreOptionText(ChoiceOption option) => option.LabelKey == "target.player"
+        ? $"{option.EntityId} 号位"
+        : string.IsNullOrWhiteSpace(option.EntityId) ? option.LabelKey : option.EntityId;
+
+    private static ChoiceRequest? ResolveLocalCoreChoice()
+    {
+        LanMultiplayerManager? network = LanMultiplayerManager.Instance;
+        if (network is null || network.SessionState != LanSessionState.InMatch || network.JoinAsSpectator) return null;
+        int seatId = network.Players.TryGetValue(network.LocalPeerId, out LanPlayerInfo? player) ? player.SeatId : 0;
+        if (seatId <= 0) return null;
+        GameView? view = network.IsHost
+            ? GameManager.Instance?.CoreRuntime?.BuildView(ViewerContext.ForPlayer(seatId))
+            : network.LastMatchStateSnapshot?.CoreView;
+        return view?.PendingChoice?.ActingSeatId == seatId ? view.PendingChoice : null;
+    }
+
+    private void HandleCoreAdvanced(CiyuanSha.GameCore.Engine.EngineStepResult _) => RefreshTargets();
 
     private void ToggleMultiTarget(int peerId, int maxTargets)
     {

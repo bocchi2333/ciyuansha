@@ -26,6 +26,12 @@ public sealed class GameState
 
     public int CurrentSeatIndex { get; set; }
 
+    public long NextPhaseDirectiveSequence { get; set; }
+
+    public GamePhase ExtraPhaseResume { get; set; } = GamePhase.NotStarted;
+
+    public List<PhaseDirective> PhaseDirectives { get; } = new();
+
     public List<int> TurnOrder { get; } = new();
 
     public SortedDictionary<int, PlayerState> Players { get; } = new();
@@ -65,6 +71,22 @@ public sealed class GameState
             writer.WriteNumber("phase", (int)Phase);
             writer.WriteNumber("round", RoundNumber);
             writer.WriteNumber("currentSeatIndex", CurrentSeatIndex);
+            writer.WriteNumber("nextPhaseDirectiveSequence", NextPhaseDirectiveSequence);
+            writer.WriteNumber("extraPhaseResume", (int)ExtraPhaseResume);
+
+            writer.WriteStartArray("phaseDirectives");
+            foreach (PhaseDirective directive in PhaseDirectives.OrderBy(value => value.Sequence))
+            {
+                writer.WriteStartObject();
+                writer.WriteNumber("sequence", directive.Sequence);
+                writer.WriteNumber("seat", directive.SeatId);
+                writer.WriteNumber("kind", (int)directive.Kind);
+                writer.WriteNumber("phase", (int)directive.Phase);
+                writer.WriteNumber("replacement", (int)directive.ReplacementPhase);
+                writer.WriteString("source", directive.SourceId);
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
 
             writer.WriteStartArray("turnOrder");
             foreach (int seat in TurnOrder)
@@ -100,6 +122,7 @@ public sealed class GameState
                 writer.WriteEndObject();
                 WriteStringArray(writer, "judgement", player.JudgementArea);
                 WriteStringArray(writer, "skills", player.SkillIds.OrderBy(value => value, StringComparer.Ordinal));
+                WriteStringArray(writer, "temporarySkills", player.TemporarySkillIds.OrderBy(value => value, StringComparer.Ordinal));
                 WriteStringArray(writer, "tempFlags", player.TemporaryFlags.OrderBy(value => value, StringComparer.Ordinal));
 
                 writer.WriteStartObject("marks");
@@ -202,6 +225,8 @@ public sealed class PlayerState
     public List<string> JudgementArea { get; } = new();
 
     public SortedSet<string> SkillIds { get; } = new(StringComparer.Ordinal);
+
+    public SortedSet<string> TemporarySkillIds { get; } = new(StringComparer.Ordinal);
 
     public SortedDictionary<string, int> Marks { get; } = new(StringComparer.Ordinal);
 

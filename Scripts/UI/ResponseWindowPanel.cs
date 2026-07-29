@@ -1,4 +1,6 @@
 using System.Linq;
+using CiyuanSha.GameCore.Choices;
+using CiyuanSha.GameCore.Domain;
 using CiyuanSha.Gameplay.Cards;
 using CiyuanSha.Gameplay.Characters;
 using CiyuanSha.Gameplay.Core;
@@ -31,6 +33,9 @@ public partial class ResponseWindowPanel : Control
     private Label? _responseMetaLabel;
     private InkCardButton? _responseCardPreview;
     private bool _wasVisible;
+    private ChoiceRequest? _coreRequest;
+    private ChoiceOption? _coreAcceptOption;
+    private ChoiceOption? _coreDeclineOption;
 
     public override void _Ready()
     {
@@ -54,6 +59,7 @@ public partial class ResponseWindowPanel : Control
         {
             GameManager.Instance.OnResponseWindowChanged += HandleStateChanged;
             GameManager.Instance.OnStateChanged += HandleStateChanged;
+            GameManager.Instance.OnCoreEngineAdvanced += HandleCoreAdvanced;
         }
 
         if (LanMultiplayerManager.Instance is not null)
@@ -70,6 +76,7 @@ public partial class ResponseWindowPanel : Control
         {
             GameManager.Instance.OnResponseWindowChanged -= HandleStateChanged;
             GameManager.Instance.OnStateChanged -= HandleStateChanged;
+            GameManager.Instance.OnCoreEngineAdvanced -= HandleCoreAdvanced;
         }
 
         if (LanMultiplayerManager.Instance is not null)
@@ -80,6 +87,13 @@ public partial class ResponseWindowPanel : Control
 
     private void RefreshView()
     {
+        if (GameManager.Instance?.IsCoreMatchActive == true)
+        {
+            RefreshCoreResponse();
+            return;
+        }
+
+        _coreRequest = null;
         GameManager? gameManager = GameManager.Instance;
         PlayerCharacter? localCharacter = ResolveLocalCharacter();
         bool isLocalResponse = gameManager is not null
@@ -169,8 +183,52 @@ public partial class ResponseWindowPanel : Control
         }
     }
 
+    private void RefreshCoreResponse()
+    {
+        _coreRequest = ResolveLocalCoreChoice();
+        if (_coreRequest?.Kind != ChoiceKind.UseOrRespond)
+        {
+            _coreRequest = null;
+            _coreAcceptOption = null;
+            _coreDeclineOption = null;
+            Visible = false;
+            _wasVisible = false;
+            return;
+        }
+
+        _coreDeclineOption = _coreRequest.Options.FirstOrDefault(option => option.OptionId == "control:decline" && option.IsEnabled);
+        _coreAcceptOption = _coreRequest.Options.FirstOrDefault(option => option.IsEnabled && option.OptionId != "control:decline");
+        Visible = true;
+        if (!_wasVisible) PlayOpenAnimation();
+        _wasVisible = true;
+        if (_promptLabel is not null)
+        {
+            _promptLabel.Text = $"需要响应\n{_coreRequest.PromptKey}";
+        }
+        if (_playDodgeButton is not null)
+        {
+            _playDodgeButton.Disabled = _coreAcceptOption is null;
+            _playDodgeButton.Text = _coreAcceptOption is null ? "没有合法响应牌" : CoreOptionText(_coreAcceptOption);
+        }
+        if (_passButton is not null)
+        {
+            _passButton.Disabled = _coreDeclineOption is null && !_coreRequest.AllowCancel;
+            _passButton.Text = "放弃响应";
+        }
+        UpdateSeal(ResponseWindowKind.Dodge, _coreAcceptOption is not null);
+        UpdateResponsePressure(ResponseWindowKind.Dodge, _coreAcceptOption is not null);
+    }
+
     private void HandlePlayDodgePressed()
     {
+        if (_coreRequest is not null && _coreAcceptOption is not null)
+        {
+            LanMultiplayerManager.Instance?.SubmitChoice(ChoiceResult.Select(
+                _coreRequest.RequestId,
+                _coreRequest.StateRevision,
+                _coreAcceptOption.OptionId));
+            return;
+        }
         PlayerCharacter? localCharacter = ResolveLocalCharacter();
         if (localCharacter is null)
         {
@@ -232,6 +290,14 @@ public partial class ResponseWindowPanel : Control
 
     private void HandlePassPressed()
     {
+        if (_coreRequest is not null)
+        {
+            ChoiceResult result = _coreDeclineOption is not null
+                ? ChoiceResult.Select(_coreRequest.RequestId, _coreRequest.StateRevision, _coreDeclineOption.OptionId)
+                : ChoiceResult.Cancel(_coreRequest.RequestId, _coreRequest.StateRevision);
+            LanMultiplayerManager.Instance?.SubmitChoice(result);
+            return;
+        }
         int localPeerId = ResolveLocalPeerId();
         if (localPeerId <= 0)
         {
@@ -262,6 +328,26 @@ public partial class ResponseWindowPanel : Control
     {
         RefreshView();
     }
+
+    private static ChoiceRequest? ResolveLocalCoreChoice()
+    {
+        LanMultiplayerManager? network = LanMultiplayerManager.Instance;
+        if (network is null || network.SessionState != LanSessionState.InMatch || network.JoinAsSpectator) return null;
+        int seatId = network.Players.TryGetValue(network.LocalPeerId, out LanPlayerInfo? player) ? player.SeatId : 0;
+        if (seatId <= 0) return null;
+        GameView? view = network.IsHost
+            ? GameManager.Instance?.CoreRuntime?.BuildView(ViewerContext.ForPlayer(seatId))
+            : network.LastMatchStateSnapshot?.CoreView;
+        return view?.PendingChoice?.ActingSeatId == seatId ? view.PendingChoice : null;
+    }
+
+    private static string CoreOptionText(ChoiceOption option) => option.LabelKey switch
+    {
+        "response.decline" => "放弃响应",
+        _ => string.IsNullOrWhiteSpace(option.EntityId) ? option.LabelKey : $"打出 {option.EntityId}"
+    };
+
+    private void HandleCoreAdvanced(CiyuanSha.GameCore.Engine.EngineStepResult _) => RefreshView();
 
     private PlayerCharacter? ResolveLocalCharacter()
     {
