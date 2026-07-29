@@ -5,11 +5,19 @@
     <RootNamespace>CiyuanSha</RootNamespace>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Remove="Build\**\*.cs" />
+    <Compile Remove="CiyuanSha.GameCore\**\*.cs" />
+    <Compile Remove="CiyuanSha.GameCore.Tests\**\*.cs" />
+    <Compile Remove="CiyuanSha.GameCore.Simulations\**\*.cs" />
     <None Remove="Build\**\*" />
     <EmbeddedResource Remove="Build\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="CiyuanSha.GameCore\CiyuanSha.GameCore.csproj" />
   </ItemGroup>
 </Project>

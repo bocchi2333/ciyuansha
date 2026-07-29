@@ -1,0 +1,11 @@
+{
+  "PackId": "ciyuansha-generals",
+  "DisplayName": "次元杀原创武将",
+  "Version": "2.0.0",
+  "EngineApiVersion": "2.0.0",
+  "License": "GPL-3.0-only",
+  "Attribution": "CiyuanSha original character content",
+  "ContentHash": "b2314deba43996198a7c069ba1b5f7a8fe271d379b5fbb3c4fb3f17fbd0e276a",
+  "Dependencies": [ { "PackId": "core-rules", "MinimumVersion": "2.0.0" } ],
+  "ContentFiles": [ "generals-and-skills.json" ]
+}

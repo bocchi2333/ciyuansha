@@ -5,8 +5,12 @@ namespace CiyuanSha.Gameplay.Core;
 /// </summary>
 public enum TurnPhase
 {
-    TurnStart = 0,
-    DrawPhase = 1,
-    PlayPhase = 2,
-    DiscardPhase = 3
+    /// <summary>标准六阶段中的准备阶段；TurnStart 为兼容旧调用的同值别名。</summary>
+    PreparationPhase = 0,
+    TurnStart = PreparationPhase,
+    JudgementPhase = 1,
+    DrawPhase = 2,
+    PlayPhase = 3,
+    DiscardPhase = 4,
+    EndPhase = 5
 }

@@ -1,0 +1,11 @@
+{
+  "PackId": "core-rules",
+  "DisplayName": "次元杀核心规则",
+  "Version": "2.0.0",
+  "EngineApiVersion": "2.0.0",
+  "License": "GPL-3.0-only",
+  "Attribution": "CiyuanSha contributors; event and choice architecture informed by Noname 444c7278",
+  "ContentHash": "6421282a15d8b1663747f318466059f71816d5be93afb3961eab6869b8e745ad",
+  "Dependencies": [],
+  "ContentFiles": [ "rules.json" ]
+}

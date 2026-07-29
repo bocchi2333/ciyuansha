@@ -1,0 +1,14 @@
+{
+  "PackId": "ciyuansha-boss",
+  "DisplayName": "次元杀 Boss",
+  "Version": "2.0.0",
+  "EngineApiVersion": "2.0.0",
+  "License": "GPL-3.0-only",
+  "Attribution": "CiyuanSha original Boss mode content",
+  "ContentHash": "a78609fa5a21ac0cdc594ae098948ea4db7bd8bea638a7d0297dc54d115767d5",
+  "Dependencies": [
+    { "PackId": "core-rules", "MinimumVersion": "2.0.0" },
+    { "PackId": "ciyuansha-generals", "MinimumVersion": "2.0.0" }
+  ],
+  "ContentFiles": [ "boss.json" ]
+}

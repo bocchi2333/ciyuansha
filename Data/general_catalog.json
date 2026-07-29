@@ -69,6 +69,56 @@
       "CardFileName": "file_000000005864720998ce9b8a58e8e031.png",
       "Summary": "Mobile defender that fits the automatic dodge skill shell.",
       "SkillIds": [ "auto_dodge" ]
+    },
+    {
+      "GeneralId": "luoxingye",
+      "DisplayName": "Luo Xingye",
+      "Title": "Refraction Blade",
+      "Gender": "Male",
+      "MaxHealth": 4,
+      "CardFileName": "file_000000005d30720684c06bbf7e363e49.png",
+      "Summary": "Conversion attacker who turns non-basic cards into Slash responses.",
+      "SkillIds": [ "blade_conversion" ]
+    },
+    {
+      "GeneralId": "sujinglan",
+      "DisplayName": "Su Jinglan",
+      "Title": "Mirror Chronomancer",
+      "Gender": "Female",
+      "MaxHealth": 3,
+      "CardFileName": "file_000000006da87209849f6d2b642ed71c.png",
+      "Summary": "Judgement controller who can replace judgement cards and profit from their resolution.",
+      "SkillIds": [ "mirror_judgement", "judgement_draw" ]
+    },
+    {
+      "GeneralId": "leixi",
+      "DisplayName": "Lei Xi",
+      "Title": "Chain Thunder Singer",
+      "Gender": "Female",
+      "MaxHealth": 4,
+      "CardFileName": "file_000000007ad472069639b33b9f21cf26.png",
+      "Summary": "Elemental controller built around chained targets and fire or thunder damage.",
+      "SkillIds": [ "elemental_resonance" ]
+    },
+    {
+      "GeneralId": "shenyuebai",
+      "DisplayName": "Shen Yuebai",
+      "Title": "Resonance Medic",
+      "Gender": "Female",
+      "MaxHealth": 3,
+      "CardFileName": "file_000000009ebc7207a57bb08a70e7ae9f.png",
+      "Summary": "Team support general who routes hand cards and recovers resources after damage.",
+      "SkillIds": [ "ally_supply", "pain_draw" ]
+    },
+    {
+      "GeneralId": "jifenxin",
+      "DisplayName": "Ji Fenxin",
+      "Title": "Boundary Breaker",
+      "Gender": "Male",
+      "MaxHealth": 5,
+      "CardFileName": "file_00000000aef872069c0cdca9f8b4c61f.png",
+      "Summary": "Limited burst general and the first scalable Boss template.",
+      "SkillIds": [ "limit_break", "first_damage_boost" ]
     }
   ]
 }

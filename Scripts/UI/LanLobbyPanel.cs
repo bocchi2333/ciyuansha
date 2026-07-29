@@ -5,6 +5,8 @@ using System.Text;
 using CiyuanSha.Gameplay.Core;
 using CiyuanSha.Gameplay.Generals;
 using CiyuanSha.Gameplay.Skills;
+using CiyuanSha.GameCore.Domain;
+using CiyuanSha.GameCore.Modes;
 using CiyuanSha.Networking;
 using Godot;
 
@@ -68,6 +70,10 @@ public partial class LanLobbyPanel : Control
     private Button? _readyButton;
     private Button? _startButton;
     private Button? _leaveButton;
+    private OptionButton? _modeOptionButton;
+    private OptionButton? _botDifficultyOptionButton;
+    private Button? _addBotButton;
+    private Button? _removeBotButton;
     private TextureRect? _generalPortrait;
     private Label? _generalNameLabel;
     private bool _localReady;
@@ -81,6 +87,7 @@ public partial class LanLobbyPanel : Control
         CacheNodes();
         WireButtons();
         PopulateGeneralOptions();
+        PopulateModeOptions();
         ApplyChrome();
 
         if (LanMultiplayerManager.Instance is null)
@@ -114,6 +121,14 @@ public partial class LanLobbyPanel : Control
         if (_characterOptionButton is not null)
         {
             _characterOptionButton.ItemSelected -= HandleGeneralSelected;
+        }
+        if (_modeOptionButton is not null)
+        {
+            _modeOptionButton.ItemSelected -= HandleModeSelected;
+        }
+        if (_botDifficultyOptionButton is not null)
+        {
+            _botDifficultyOptionButton.ItemSelected -= HandleBotDifficultySelected;
         }
     }
 
@@ -199,6 +214,10 @@ public partial class LanLobbyPanel : Control
         _readyButton = GetNodeOrNull<Button>(ReadyButtonPath);
         _startButton = GetNodeOrNull<Button>(StartButtonPath);
         _leaveButton = GetNodeOrNull<Button>(LeaveButtonPath);
+        _modeOptionButton = GetNodeOrNull<OptionButton>("Panel/ModeOptionButton");
+        _botDifficultyOptionButton = GetNodeOrNull<OptionButton>("Panel/BotDifficultyOptionButton");
+        _addBotButton = GetNodeOrNull<Button>("Panel/AddBotButton");
+        _removeBotButton = GetNodeOrNull<Button>("Panel/RemoveBotButton");
         _generalPortrait = GetNodeOrNull<TextureRect>("Panel/GeneralPortrait");
         _generalNameLabel = GetNodeOrNull<Label>("Panel/GeneralNameLabel");
     }
@@ -234,6 +253,54 @@ public partial class LanLobbyPanel : Control
         {
             _characterOptionButton.ItemSelected += HandleGeneralSelected;
         }
+        if (_modeOptionButton is not null)
+        {
+            _modeOptionButton.ItemSelected += HandleModeSelected;
+        }
+        if (_botDifficultyOptionButton is not null)
+        {
+            _botDifficultyOptionButton.ItemSelected += HandleBotDifficultySelected;
+        }
+        if (_addBotButton is not null)
+        {
+            _addBotButton.Pressed += AddBot;
+        }
+        if (_removeBotButton is not null)
+        {
+            _removeBotButton.Pressed += RemoveLastBot;
+        }
+    }
+
+    private void PopulateModeOptions()
+    {
+        if (_modeOptionButton is not null)
+        {
+            _modeOptionButton.Clear();
+            AddModeOption("单挑", BuiltInModeIds.Duel);
+            AddModeOption("四人身份", BuiltInModeIds.Identity);
+            AddModeOption("四人 2v2", BuiltInModeIds.TeamTwoVersusTwo);
+            AddModeOption("Boss / PvE", BuiltInModeIds.Boss);
+        }
+        if (_botDifficultyOptionButton is not null)
+        {
+            _botDifficultyOptionButton.Clear();
+            foreach (BotDifficulty difficulty in System.Enum.GetValues<BotDifficulty>())
+            {
+                _botDifficultyOptionButton.AddItem(difficulty switch
+                {
+                    BotDifficulty.Easy => "简单",
+                    BotDifficulty.Standard => "标准",
+                    _ => "困难"
+                }, (int)difficulty);
+            }
+            _botDifficultyOptionButton.Select((int)BotDifficulty.Standard);
+        }
+    }
+
+    private void AddModeOption(string label, string modeId)
+    {
+        _modeOptionButton!.AddItem(label);
+        _modeOptionButton.SetItemMetadata(_modeOptionButton.ItemCount - 1, modeId);
     }
 
     private void PopulateGeneralOptions()
@@ -318,6 +385,32 @@ public partial class LanLobbyPanel : Control
         if (_leaveButton is not null)
         {
             _leaveButton.Disabled = !connected;
+        }
+
+        bool canConfigure = network.IsHost && network.SessionState == LanSessionState.InLobby;
+        if (_modeOptionButton is not null)
+        {
+            _modeOptionButton.Disabled = !canConfigure;
+            for (int index = 0; index < _modeOptionButton.ItemCount; index++)
+            {
+                if (_modeOptionButton.GetItemMetadata(index).AsString() == network.SelectedModeId)
+                {
+                    _modeOptionButton.Select(index);
+                    break;
+                }
+            }
+        }
+        if (_botDifficultyOptionButton is not null)
+        {
+            _botDifficultyOptionButton.Disabled = !canConfigure;
+        }
+        if (_addBotButton is not null)
+        {
+            _addBotButton.Disabled = !canConfigure;
+        }
+        if (_removeBotButton is not null)
+        {
+            _removeBotButton.Disabled = !canConfigure || !network.Players.Values.Any(player => player.IsBot && !player.IsBoss);
         }
 
         SetStatus(BuildStatusText(network, matchEnded));
@@ -422,12 +515,16 @@ public partial class LanLobbyPanel : Control
         CyberStyle.ApplyLineEdit(_playerNameLineEdit);
         CyberStyle.ApplyLineEdit(_addressLineEdit);
         CyberStyle.ApplyOptionButton(_characterOptionButton);
+        CyberStyle.ApplyOptionButton(_modeOptionButton);
+        CyberStyle.ApplyOptionButton(_botDifficultyOptionButton);
         CyberStyle.ApplyRichText(_playersLabel);
         CyberStyle.ApplyButton(_hostButton, CyberButtonKind.Primary);
         CyberStyle.ApplyButton(_joinButton, CyberButtonKind.Action);
         CyberStyle.ApplyButton(_readyButton, CyberButtonKind.Action);
         CyberStyle.ApplyButton(_startButton, CyberButtonKind.Primary);
         CyberStyle.ApplyButton(_leaveButton, CyberButtonKind.Danger);
+        CyberStyle.ApplyButton(_addBotButton, CyberButtonKind.Action);
+        CyberStyle.ApplyButton(_removeBotButton, CyberButtonKind.Danger);
 
         foreach (Button? button in new[] { _hostButton, _joinButton, _readyButton, _startButton, _leaveButton })
         {
@@ -443,6 +540,41 @@ public partial class LanLobbyPanel : Control
         ApplySelectedGeneralToField();
         RefreshCharacterDescription();
         SubmitSelectedGeneralIfConnected(resetReady: true);
+    }
+
+    private void HandleModeSelected(long index)
+    {
+        if (_modeOptionButton is null || index < 0 || index >= _modeOptionButton.ItemCount)
+        {
+            return;
+        }
+        LanMultiplayerManager.Instance?.SetMode(_modeOptionButton.GetItemMetadata((int)index).AsString());
+        RefreshUI();
+    }
+
+    private void HandleBotDifficultySelected(long index)
+    {
+        if (_botDifficultyOptionButton is null || index < 0 || index >= _botDifficultyOptionButton.ItemCount)
+        {
+            return;
+        }
+        LanMultiplayerManager.Instance?.SetBotDifficulty((BotDifficulty)_botDifficultyOptionButton.GetItemId((int)index));
+    }
+
+    private void AddBot()
+    {
+        LanMultiplayerManager? network = LanMultiplayerManager.Instance;
+        network?.AddBot(GetCharacterId(), network.SelectedBotDifficulty);
+    }
+
+    private void RemoveLastBot()
+    {
+        LanMultiplayerManager? network = LanMultiplayerManager.Instance;
+        int botPeerId = network?.Players.Values.Where(player => player.IsBot && !player.IsBoss).Select(player => player.PeerId).LastOrDefault() ?? 0;
+        if (botPeerId > 0)
+        {
+            network?.RemoveBot(botPeerId);
+        }
     }
 
     private void SubmitSelectedGeneralIfConnected(bool resetReady)

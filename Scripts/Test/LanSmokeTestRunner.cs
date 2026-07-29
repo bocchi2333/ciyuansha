@@ -729,8 +729,24 @@ public partial class LanSmokeTestRunner : Node
             return;
         }
 
-        CardInstance? discardCard = localCharacter.HandCards.FirstOrDefault(card =>
-            !string.Equals(card.InstanceId, _fullRoundLastDiscardedCardId, StringComparison.Ordinal));
+        // A reliable RPC being queued does not immediately mutate the client's
+        // replicated hand. Wait until the authoritative snapshot removes the
+        // previously submitted card before selecting the next discard; otherwise
+        // a fast frame loop can enqueue several legal-looking cards after the host
+        // has already left DiscardPhase.
+        if (!string.IsNullOrWhiteSpace(_fullRoundLastDiscardedCardId))
+        {
+            bool previousDiscardStillVisible = localCharacter.HandCards.Any(card =>
+                string.Equals(card.InstanceId, _fullRoundLastDiscardedCardId, StringComparison.Ordinal));
+            if (previousDiscardStillVisible)
+            {
+                return;
+            }
+
+            _fullRoundLastDiscardedCardId = string.Empty;
+        }
+
+        CardInstance? discardCard = localCharacter.HandCards.FirstOrDefault();
         if (discardCard is null)
         {
             return;

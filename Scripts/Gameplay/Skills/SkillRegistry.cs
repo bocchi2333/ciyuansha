@@ -21,6 +21,11 @@ public static class SkillRegistry
         Register<JudgementDrawSkill>("judgement_draw");
         Register<OffTurnLossDrawSkill>("off_turn_loss_draw");
         Register<PainDrawSkill>("pain_draw");
+        Register<BladeConversionSkill>("blade_conversion");
+        Register<MirrorJudgementSkill>("mirror_judgement");
+        Register<ElementalResonanceSkill>("elemental_resonance");
+        Register<AllySupplySkill>("ally_supply");
+        Register<LimitBreakSkill>("limit_break");
     }
 
     public static IReadOnlyCollection<SkillDefinition> All => _definitions.Values;

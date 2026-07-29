@@ -1,0 +1,17 @@
+次元杀 / CiyuanSha
+Copyright (C) 2026 CiyuanSha contributors
+SPDX-License-Identifier: GPL-3.0-only
+
+This project studies and ports selected rule-engine ideas and GPL-licensed
+implementation patterns from the open-source project “无名杀 / Noname”:
+
+  Repository: https://github.com/libnoname/noname
+  Reviewed commit: 444c7278a6b4b4754eaad4299f77ab31ba8d1655
+  License: GPL-3.0-only
+
+No Noname character artwork, audio, or other unverified media is included.
+CiyuanSha's locally supplied artwork and audio retain their own recorded
+provenance; see Assets/Licenses and Docs/asset-license-ledger.md.
+
+Source distributions and public binary distributions must retain this
+notice, THIRD_PARTY_NOTICES, the GPL license, and the corresponding source.

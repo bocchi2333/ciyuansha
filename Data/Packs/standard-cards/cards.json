@@ -1,0 +1,38 @@
+{
+  "Cards": [
+    { "CardId": "slash", "DisplayName": "杀", "Description": "对攻击范围内一名其他角色使用；其需打出闪，否则受到1点伤害。", "Category": "Basic", "EffectId": "card.slash", "AiValues": { "use": 5, "keep": 4 } },
+    { "CardId": "dodge", "DisplayName": "闪", "Description": "响应杀或万箭齐发。", "Category": "Basic", "EffectId": "card.dodge", "AiValues": { "use": -2, "keep": 7 } },
+    { "CardId": "peach", "DisplayName": "桃", "Description": "回复1点体力，或用于濒死救援。", "Category": "Basic", "EffectId": "card.peach", "AiValues": { "use": 8, "keep": 9 } },
+    { "CardId": "duel", "DisplayName": "决斗", "Description": "目标开始，双方轮流打出杀，先拒绝者受到对方造成的1点伤害。", "Category": "Trick", "EffectId": "card.duel", "AiValues": { "use": 6, "keep": 4 } },
+    { "CardId": "lightning", "DisplayName": "闪电", "Description": "延时锦囊；判定黑桃2至9时受到3点雷电伤害。", "Category": "DelayedTrick", "EffectId": "card.lightning", "AiValues": { "use": 1, "keep": 1 } },
+    { "CardId": "snatch", "DisplayName": "顺手牵羊", "Description": "获得距离1的一名其他角色区域内一张牌。", "Category": "Trick", "EffectId": "card.snatch", "AiValues": { "use": 7, "keep": 5 } },
+    { "CardId": "dismantle", "DisplayName": "过河拆桥", "Description": "弃置一名其他角色区域内一张牌。", "Category": "Trick", "EffectId": "card.dismantle", "AiValues": { "use": 6, "keep": 4 } },
+    { "CardId": "indulgence", "DisplayName": "乐不思蜀", "Description": "延时锦囊；判定不为红桃时跳过出牌阶段。", "Category": "DelayedTrick", "EffectId": "card.indulgence", "AiValues": { "use": 6, "keep": 4 } },
+    { "CardId": "barbarians", "DisplayName": "南蛮入侵", "Description": "所有其他角色依次需打出杀，否则受到1点伤害。", "Category": "Trick", "EffectId": "card.barbarians", "AiValues": { "use": 5, "keep": 3 } },
+    { "CardId": "nullification", "DisplayName": "无懈可击", "Description": "抵消锦囊对一个目标的效果，并可被无懈可击响应。", "Category": "Trick", "EffectId": "card.nullification", "AiValues": { "use": -1, "keep": 8 } },
+    { "CardId": "peach_garden", "DisplayName": "桃园结义", "Description": "所有角色依次回复1点体力。", "Category": "Trick", "EffectId": "card.peach_garden", "AiValues": { "use": 5, "keep": 4 } },
+    { "CardId": "arrow_barrage", "DisplayName": "万箭齐发", "Description": "所有其他角色依次需打出闪，否则受到1点伤害。", "Category": "Trick", "EffectId": "card.arrow_barrage", "AiValues": { "use": 5, "keep": 3 } },
+    { "CardId": "harvest", "DisplayName": "五谷丰登", "Description": "亮出等同目标数的牌，各目标依次获得其中一张。", "Category": "Trick", "EffectId": "card.harvest", "AiValues": { "use": 4, "keep": 3 } },
+    { "CardId": "ex_nihilo", "DisplayName": "无中生有", "Description": "摸两张牌。", "Category": "Trick", "EffectId": "card.ex_nihilo", "AiValues": { "use": 9, "keep": 7 } },
+    { "CardId": "borrow_sword", "DisplayName": "借刀杀人", "Description": "令一名有武器的角色对指定目标使用杀，否则你获得其武器。", "Category": "Trick", "EffectId": "card.borrow_sword", "AiValues": { "use": 5, "keep": 3 } },
+
+    { "CardId": "ice_sword", "DisplayName": "寒冰剑", "Description": "武器，攻击范围2。造成伤害时可防止之并弃置目标两张牌。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "Weapon", "AttackRange": 2, "AiValues": { "use": 5, "keep": 3 } },
+    { "CardId": "double_swords", "DisplayName": "雌雄双股剑", "Description": "武器，攻击范围2。指定异性目标后可令其弃牌或令你摸牌。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "Weapon", "AttackRange": 2, "AiValues": { "use": 5, "keep": 3 } },
+    { "CardId": "eight_diagram", "DisplayName": "八卦阵", "Description": "防具。需要闪时可判定，红色视为打出闪。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "Armor", "AiValues": { "use": 6, "keep": 5 } },
+    { "CardId": "jueying", "DisplayName": "绝影", "Description": "+1坐骑。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "DefensiveMount", "AiValues": { "use": 4, "keep": 3 } },
+    { "CardId": "green_dragon_blade", "DisplayName": "青龙偃月刀", "Description": "武器，攻击范围3。杀被闪后可继续使用杀。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "Weapon", "AttackRange": 3, "AiValues": { "use": 6, "keep": 4 } },
+    { "CardId": "qinggang_sword", "DisplayName": "青釭剑", "Description": "武器，攻击范围2。杀指定目标后无视其防具。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "Weapon", "AttackRange": 2, "AiValues": { "use": 6, "keep": 4 } },
+    { "CardId": "serpent_spear", "DisplayName": "丈八蛇矛", "Description": "武器，攻击范围3。可将两张手牌当杀使用或打出。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "Weapon", "AttackRange": 3, "AiValues": { "use": 6, "keep": 4 } },
+    { "CardId": "dawan", "DisplayName": "大宛", "Description": "-1坐骑。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "OffensiveMount", "AiValues": { "use": 4, "keep": 3 } },
+    { "CardId": "kylin_bow", "DisplayName": "麒麟弓", "Description": "武器，攻击范围5。造成伤害后可弃置目标坐骑。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "Weapon", "AttackRange": 5, "AiValues": { "use": 7, "keep": 5 } },
+    { "CardId": "chitu", "DisplayName": "赤兔", "Description": "-1坐骑。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "OffensiveMount", "AiValues": { "use": 4, "keep": 3 } },
+    { "CardId": "zhuahuangfeidian", "DisplayName": "爪黄飞电", "Description": "+1坐骑。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "DefensiveMount", "AiValues": { "use": 4, "keep": 3 } },
+    { "CardId": "crossbow", "DisplayName": "诸葛连弩", "Description": "武器，攻击范围1。出牌阶段使用杀无次数限制。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "Weapon", "AttackRange": 1, "AiValues": { "use": 7, "keep": 5 } },
+    { "CardId": "renwang_shield", "DisplayName": "仁王盾", "Description": "防具。黑色杀对你无效。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "Armor", "AiValues": { "use": 6, "keep": 5 } },
+    { "CardId": "dilu", "DisplayName": "的卢", "Description": "+1坐骑。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "DefensiveMount", "AiValues": { "use": 4, "keep": 3 } },
+    { "CardId": "stone_axe", "DisplayName": "贯石斧", "Description": "武器，攻击范围3。杀被闪后可弃两张牌令其仍造成伤害。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "Weapon", "AttackRange": 3, "AiValues": { "use": 6, "keep": 4 } },
+    { "CardId": "fangtian_halberd", "DisplayName": "方天画戟", "Description": "武器，攻击范围4。使用最后手牌杀时可额外指定至多两个目标。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "Weapon", "AttackRange": 4, "AiValues": { "use": 7, "keep": 5 } },
+    { "CardId": "zixing", "DisplayName": "紫骍", "Description": "-1坐骑。", "Category": "Equipment", "EffectId": "card.equipment", "EquipmentSlot": "OffensiveMount", "AiValues": { "use": 4, "keep": 3 } }
+  ],
+  "Generals": [], "Skills": [], "Decks": [], "Bosses": []
+}

@@ -1,0 +1,11 @@
+{
+  "PackId": "standard-cards",
+  "DisplayName": "标准卡牌",
+  "Version": "2.0.0",
+  "EngineApiVersion": "2.0.0",
+  "License": "GPL-3.0-only",
+  "Attribution": "CiyuanSha contributors; rules cross-checked with Noname standard.js at 444c7278",
+  "ContentHash": "2e83ba4876095233f5f885aba827b1e66116ed2200ff66669ee0c305172aeb6e",
+  "Dependencies": [ { "PackId": "core-rules", "MinimumVersion": "2.0.0" } ],
+  "ContentFiles": [ "cards.json" ]
+}

@@ -113,7 +113,7 @@ public static class StandardDeckDefinition
         Add(deck, CardType.SupplyShortage, CardSuit.Club, 4);
 
         Weapon(deck, CardSuit.Spade, 1, "Guding Blade", EquipmentEffectType.GudingBlade, 2);
-        Weapon(deck, CardSuit.Diamond, 1, "Vermilion Fan", EquipmentEffectType.None, 4);
+        Weapon(deck, CardSuit.Diamond, 1, "Vermilion Fan", EquipmentEffectType.VermilionFan, 4);
         Armor(deck, CardSuit.Spade, 2, "Vine Armor", EquipmentEffectType.VineArmor);
         Armor(deck, CardSuit.Club, 2, "Vine Armor", EquipmentEffectType.VineArmor);
         Armor(deck, CardSuit.Club, 1, "Silver Lion", EquipmentEffectType.SilverLion);

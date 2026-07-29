@@ -29,6 +29,10 @@ public partial class CyberMatchHudPanel : Control
 	{
 		CyberStyle.ApplyRootTheme(this);
 		BuildBackdrop();
+		if (GetNodeOrNull<GenericChoicePanel>("GenericChoicePanelV2") is null)
+		{
+			AddChild(new GenericChoicePanel());
+		}
 		BindGameManager();
 		if (GameUserSettings.Instance is not null)
 		{
@@ -497,10 +501,12 @@ public partial class CyberMatchHudPanel : Control
 	{
 		return phase switch
 		{
-			TurnPhase.TurnStart => "回合开始",
+			TurnPhase.TurnStart => "准备阶段",
+			TurnPhase.JudgementPhase => "判定阶段",
 			TurnPhase.DrawPhase => "摸牌阶段",
 			TurnPhase.PlayPhase => "出牌阶段",
 			TurnPhase.DiscardPhase => "弃牌阶段",
+			TurnPhase.EndPhase => "结束阶段",
 			_ => phase.ToString().ToUpperInvariant()
 		};
 	}

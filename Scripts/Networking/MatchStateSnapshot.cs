@@ -1,4 +1,8 @@
 using System.Collections.Generic;
+using CiyuanSha.GameCore.Choices;
+using CiyuanSha.GameCore.Content;
+using CiyuanSha.GameCore.Domain;
+using CiyuanSha.GameCore.Networking;
 
 namespace CiyuanSha.Networking;
 
@@ -7,6 +11,26 @@ namespace CiyuanSha.Networking;
 /// </summary>
 public class MatchStateSnapshot
 {
+    public int ProtocolVersion { get; set; } = ProtocolV2.Version;
+
+    public string EngineApiVersion { get; set; } = ProtocolV2.EngineApiVersion;
+
+    public string MatchId { get; set; } = string.Empty;
+
+    public string ModeId { get; set; } = "duel";
+
+    public long StateRevision { get; set; }
+
+    public long JournalCursor { get; set; }
+
+    public string StateHash { get; set; } = string.Empty;
+
+    public ViewerRole ViewerRole { get; set; } = ViewerRole.Player;
+
+    public ChoiceRequest? ActiveChoice { get; set; }
+
+    public List<ContentPackReference> ContentPacks { get; set; } = new();
+
     public bool IsMatchRunning { get; set; }
 
     public int WinnerPeerId { get; set; }

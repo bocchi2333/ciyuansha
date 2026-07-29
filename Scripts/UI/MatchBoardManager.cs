@@ -73,7 +73,10 @@ public partial class MatchBoardManager : Control
             return;
         }
 
-        List<LanPlayerInfo> players = network.Players.Values.OrderBy(player => player.PeerId).ToList();
+        List<LanPlayerInfo> players = network.Players.Values
+            .Where(player => !player.IsSpectator)
+            .OrderBy(player => player.SeatId > 0 ? player.SeatId : player.PeerId)
+            .ToList();
         string rosterSignature = BuildRosterSignature(players);
         if (_spawnedCharacters.Count == players.Count && string.Equals(_boardRosterSignature, rosterSignature, System.StringComparison.Ordinal))
         {

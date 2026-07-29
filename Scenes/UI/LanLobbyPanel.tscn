@@ -257,7 +257,7 @@ offset_bottom = 488.0
 layout_mode = 0
 offset_left = 778.0
 offset_top = 110.0
-offset_right = 1098.0
+offset_right = 890.0
 offset_bottom = 142.0
 text = "房间成员"
 
@@ -266,11 +266,41 @@ layout_mode = 0
 offset_left = 778.0
 offset_top = 154.0
 offset_right = 1098.0
-offset_bottom = 470.0
+offset_bottom = 420.0
 bbcode_enabled = true
 fit_content = false
 scroll_active = true
 text = "[color=#8C7D63]等待玩家加入房间……[/color]"
+
+[node name="ModeOptionButton" type="OptionButton" parent="Panel"]
+layout_mode = 0
+offset_left = 900.0
+offset_top = 106.0
+offset_right = 1098.0
+offset_bottom = 142.0
+
+[node name="BotDifficultyOptionButton" type="OptionButton" parent="Panel"]
+layout_mode = 0
+offset_left = 778.0
+offset_top = 430.0
+offset_right = 886.0
+offset_bottom = 468.0
+
+[node name="AddBotButton" type="Button" parent="Panel"]
+layout_mode = 0
+offset_left = 894.0
+offset_top = 430.0
+offset_right = 994.0
+offset_bottom = 468.0
+text = "添加 AI"
+
+[node name="RemoveBotButton" type="Button" parent="Panel"]
+layout_mode = 0
+offset_left = 1002.0
+offset_top = 430.0
+offset_right = 1098.0
+offset_bottom = 468.0
+text = "移除 AI"
 
 [node name="BottomRule" type="ColorRect" parent="Panel"]
 layout_mode = 0

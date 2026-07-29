@@ -418,10 +418,12 @@ public partial class GeneralCardView : Control
 	{
 		return phase switch
 		{
-			TurnPhase.TurnStart => "回合",
+			TurnPhase.TurnStart => "准备",
+			TurnPhase.JudgementPhase => "判定",
 			TurnPhase.DrawPhase => "摸牌",
 			TurnPhase.PlayPhase => "出牌",
 			TurnPhase.DiscardPhase => "弃牌",
+			TurnPhase.EndPhase => "结束",
 			_ => "当前"
 		};
 	}

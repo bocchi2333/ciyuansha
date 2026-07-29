@@ -6,8 +6,14 @@ using CiyuanSha.Gameplay.Battle;
 using CiyuanSha.Gameplay.Cards;
 using CiyuanSha.Gameplay.Characters;
 using CiyuanSha.Gameplay.Skills;
+using CiyuanSha.GameCore.Choices;
+using CiyuanSha.GameCore.Engine;
+using CiyuanSha.GameCore.Modes;
 using CiyuanSha.Networking;
 using Godot;
+using CoreGameView = CiyuanSha.GameCore.Domain.GameView;
+using CoreViewerContext = CiyuanSha.GameCore.Domain.ViewerContext;
+using CoreViewerRole = CiyuanSha.GameCore.Domain.ViewerRole;
 
 namespace CiyuanSha.Gameplay.Core;
 
@@ -32,6 +38,9 @@ public partial class GameManager : Node
 	public bool EnableFactionVictoryRules { get; set; }
 
 	public ActionManager? ActionManager => _actionManager;
+
+	/// <summary>The host-owned deterministic rules runtime used by protocol V2.</summary>
+	public GameCoreRuntime? CoreRuntime { get; private set; }
 
 	public TurnPhase CurrentPhase { get; private set; } = TurnPhase.TurnStart;
 
@@ -130,6 +139,8 @@ public partial class GameManager : Node
 
 	public event Action<NetworkPresentationEvent>? OnPresentationEvent;
 
+	public event Action<EngineStepResult>? OnCoreEngineAdvanced;
+
 	private ActionManager? _actionManager;
 	private readonly Dictionary<int, PlayerCharacter> _peerCharacters = new();
 	private readonly List<int> _turnOrder = new();
@@ -187,6 +198,44 @@ public partial class GameManager : Node
 
 		Instance = this;
 		_actionManager = ResolveActionManager();
+		try
+		{
+			CoreRuntime = GameCoreRuntime.LoadDefault();
+		}
+		catch (Exception exception)
+		{
+			GD.PushError($"GameCore content initialization failed: {exception.Message}");
+			CoreRuntime = null;
+		}
+	}
+
+	public EngineStepResult BeginCoreMatch(MatchConfig config)
+	{
+		if (CoreRuntime is null)
+		{
+			throw new InvalidOperationException("GameCore runtime is unavailable.");
+		}
+
+		EngineStepResult result = CoreRuntime.Start(config);
+		OnCoreEngineAdvanced?.Invoke(result);
+		RequestStateSync();
+		return result;
+	}
+
+	public EngineStepResult SubmitCoreChoice(int seatId, string reconnectToken, ChoiceResult result)
+	{
+		if (CoreRuntime is null)
+		{
+			throw new InvalidOperationException("GameCore runtime is unavailable.");
+		}
+
+		EngineStepResult step = CoreRuntime.SubmitChoice(seatId, reconnectToken, result);
+		OnCoreEngineAdvanced?.Invoke(step);
+		if (step.Progress != EngineProgress.Rejected)
+		{
+			RequestStateSync();
+		}
+		return step;
 	}
 
 	public override void _ExitTree()
@@ -216,6 +265,7 @@ public partial class GameManager : Node
 		switch (CurrentPhase)
 		{
 			case TurnPhase.TurnStart:
+			case TurnPhase.JudgementPhase:
 				if (!_actionManager.HasPendingActions)
 				{
 					AdvanceToNextPhase();
@@ -235,6 +285,13 @@ public partial class GameManager : Node
 
 			case TurnPhase.DiscardPhase:
 				if (!_isWaitingForDiscardInput && !_actionManager.HasPendingActions)
+				{
+					AdvanceToNextPhase();
+				}
+				break;
+
+			case TurnPhase.EndPhase:
+				if (!_actionManager.HasPendingActions)
 				{
 					AdvanceToNextPhase();
 				}
@@ -972,8 +1029,25 @@ public partial class GameManager : Node
 
 	public MatchStateSnapshot BuildMatchStateSnapshot(int viewerPeerId = -1)
 	{
+		GameCoreRuntime? core = CoreRuntime;
+		CoreViewerRole viewerRole = viewerPeerId == 0 ? CoreViewerRole.Spectator : CoreViewerRole.Player;
+		CoreGameView? coreView = core?.Engine is null
+			? null
+			: core.BuildView(viewerRole == CoreViewerRole.Spectator
+				? CoreViewerContext.Spectator
+				: CoreViewerContext.ForPlayer(Math.Max(1, viewerPeerId)));
 		return new MatchStateSnapshot
 		{
+			ProtocolVersion = CiyuanSha.GameCore.Networking.ProtocolV2.Version,
+			EngineApiVersion = CiyuanSha.GameCore.Networking.ProtocolV2.EngineApiVersion,
+			MatchId = coreView?.MatchId ?? string.Empty,
+			ModeId = coreView?.ModeId ?? LanMultiplayerManager.Instance?.SelectedModeId ?? BuiltInModeIds.Duel,
+			StateRevision = coreView?.Revision ?? 0,
+			JournalCursor = core?.Engine?.Journal.Cursor ?? 0,
+			StateHash = coreView?.StateHash ?? string.Empty,
+			ViewerRole = viewerRole,
+			ActiveChoice = coreView?.PendingChoice,
+			ContentPacks = core?.ContentPacks.ToList() ?? new List<CiyuanSha.GameCore.Content.ContentPackReference>(),
 			IsMatchRunning = IsMatchRunning,
 			WinnerPeerId = WinnerPeerId,
 			ResultMessage = ResultMessage,
@@ -1008,7 +1082,18 @@ public partial class GameManager : Node
 			TurnOrder = new List<int>(_turnOrder),
 			Characters = _peerCharacters
 				.OrderBy(entry => entry.Key)
-				.Select(entry => entry.Value.ToNetworkState(viewerPeerId <= 0 || entry.Key == viewerPeerId))
+				.Select(entry =>
+				{
+					NetworkCharacterState state = entry.Value.ToNetworkState(viewerPeerId < 0 || entry.Key == viewerPeerId);
+					LanPlayerInfo? lobbyPlayer = LanMultiplayerManager.Instance?.Players.GetValueOrDefault(entry.Key);
+					int seatId = lobbyPlayer?.SeatId ?? entry.Key;
+					CiyuanSha.GameCore.Domain.PlayerView? playerView = coreView?.Players.FirstOrDefault(player => player.SeatId == seatId);
+					if (viewerPeerId >= 0 && playerView is { IsRoleVisible: false })
+					{
+						state.Faction = "Hidden";
+					}
+					return state;
+				})
 				.ToList(),
 			BattleLog = _battleLog
 				.Select(entry => new NetworkBattleLogEntry
@@ -1217,11 +1302,19 @@ public partial class GameManager : Node
 	{
 		return new LanPlayerInfo
 		{
+			PlayerId = player.PlayerId,
 			PeerId = player.PeerId,
+			SeatId = player.SeatId,
+			TransportPeerId = player.TransportPeerId,
 			PlayerName = player.PlayerName,
 			CharacterId = player.CharacterId,
 			IsReady = player.IsReady,
-			IsHost = player.IsHost
+			IsHost = player.IsHost,
+			IsConnected = player.IsConnected,
+			IsBot = player.IsBot,
+			IsSpectator = player.IsSpectator,
+			IsBoss = player.IsBoss,
+			BotDifficulty = player.BotDifficulty
 		};
 	}
 
@@ -1294,7 +1387,7 @@ public partial class GameManager : Node
 
 	private void AdvanceToNextPhase()
 	{
-		if (CurrentPhase == TurnPhase.DiscardPhase)
+		if (CurrentPhase == TurnPhase.EndPhase)
 		{
 			EmitRuleEvent(RuleEventType.TurnEnded, actingPeerId: CurrentTurnPeerId, phase: CurrentPhase, message: $"Turn ended: peer {CurrentTurnPeerId}.");
 			AdvanceTurnOwner();
@@ -1304,9 +1397,11 @@ public partial class GameManager : Node
 
 		TurnPhase nextPhase = CurrentPhase switch
 		{
-			TurnPhase.TurnStart => TurnPhase.DrawPhase,
+			TurnPhase.TurnStart => TurnPhase.JudgementPhase,
+			TurnPhase.JudgementPhase => TurnPhase.DrawPhase,
 			TurnPhase.DrawPhase => TurnPhase.PlayPhase,
 			TurnPhase.PlayPhase => TurnPhase.DiscardPhase,
+			TurnPhase.DiscardPhase => TurnPhase.EndPhase,
 			_ => TurnPhase.TurnStart
 		};
 
@@ -1333,9 +1428,15 @@ public partial class GameManager : Node
 				AddBattleLog($"Turn start: peer {CurrentTurnPeerId}.");
 				EmitRuleEvent(RuleEventType.TurnStarted, actingPeerId: CurrentTurnPeerId, phase: phase, message: $"Turn start: peer {CurrentTurnPeerId}.");
 				TriggerTurnStartSkills();
-				if (_peerCharacters.TryGetValue(CurrentTurnPeerId, out PlayerCharacter? turnStartCharacter))
+				break;
+
+			case TurnPhase.JudgementPhase:
+				_isWaitingForPlayInput = false;
+				_isWaitingForDiscardInput = false;
+				_hasQueuedPlayPhaseAction = false;
+				if (_peerCharacters.TryGetValue(CurrentTurnPeerId, out PlayerCharacter? judgementCharacter))
 				{
-					ExecuteDelayedTricks(turnStartCharacter);
+					ExecuteDelayedTricks(judgementCharacter);
 				}
 				break;
 
@@ -1363,6 +1464,16 @@ public partial class GameManager : Node
 				_isWaitingForDiscardInput = false;
 				_hasQueuedPlayPhaseAction = false;
 				ExecuteDiscardPhase();
+				break;
+
+			case TurnPhase.EndPhase:
+				_isWaitingForPlayInput = false;
+				_isWaitingForDiscardInput = false;
+				_hasQueuedPlayPhaseAction = false;
+				if (_peerCharacters.TryGetValue(CurrentTurnPeerId, out PlayerCharacter? endingCharacter))
+				{
+					endingCharacter.ClearPendingSlashDamageBonus();
+				}
 				break;
 		}
 
@@ -1462,10 +1573,16 @@ public partial class GameManager : Node
 		{
 			CardType.FireSlash => DamageType.Fire,
 			CardType.ThunderSlash => DamageType.Thunder,
+			CardType.Slash when sourceCharacter.CanUseVermilionFan
+				&& string.Equals(command.DamageType, DamageType.Fire.ToString(), StringComparison.OrdinalIgnoreCase) => DamageType.Fire,
 			_ => Enum.TryParse(command.DamageType, true, out DamageType parsedDamageType)
 				? parsedDamageType
 				: DamageType.Physical
 		};
+		if (playedCard.CardType == CardType.Slash && damageType == DamageType.Fire)
+		{
+			AddBattleLog($"{sourceCharacter.CharacterName} converts Slash to Fire Slash with Vermilion Fan.");
+		}
 
 		List<PlayerCharacter> unblockedTargets = new();
 		foreach (PlayerCharacter targetCharacter in targets)
@@ -1561,7 +1678,6 @@ public partial class GameManager : Node
 		}
 
 		AddBattleLog($"{currentCharacter.CharacterName} keeps all cards within hand limit {handLimit}.");
-		currentCharacter.ClearPendingSlashDamageBonus();
 	}
 
 	private bool TryDiscardCardCommand(int actingPeerId, NetworkPlayCommand command)

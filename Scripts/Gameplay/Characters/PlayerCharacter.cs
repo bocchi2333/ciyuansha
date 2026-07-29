@@ -98,6 +98,8 @@ public partial class PlayerCharacter : Node
 
     public bool CanUseGudingBlade => EquippedWeapon?.EquipmentEffect == EquipmentEffectType.GudingBlade;
 
+    public bool CanUseVermilionFan => EquippedWeapon?.EquipmentEffect == EquipmentEffectType.VermilionFan;
+
     public bool HasVineArmor => EquippedArmor?.EquipmentEffect == EquipmentEffectType.VineArmor;
 
     public bool HasRenwangShield => EquippedArmor?.EquipmentEffect == EquipmentEffectType.RenwangShield;
@@ -1124,6 +1126,12 @@ public partial class PlayerCharacter : Node
         if (displayName.Contains("Guding", StringComparison.OrdinalIgnoreCase))
         {
             return EquipmentEffectType.GudingBlade;
+        }
+
+        if (displayName.Contains("Vermilion", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("Zhuque", StringComparison.OrdinalIgnoreCase))
+        {
+            return EquipmentEffectType.VermilionFan;
         }
 
         if (displayName.Contains("Eight Diagram", StringComparison.OrdinalIgnoreCase))

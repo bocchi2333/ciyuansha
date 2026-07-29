@@ -1,0 +1,14 @@
+{
+  "PackId": "military-cards",
+  "DisplayName": "军争卡牌与牌堆",
+  "Version": "2.0.0",
+  "EngineApiVersion": "2.0.0",
+  "License": "GPL-3.0-only",
+  "Attribution": "CiyuanSha contributors; rules cross-checked with Noname extra.js at 444c7278",
+  "ContentHash": "59db7e376de74c18bbe7b540f05ac5793b006823f8bc0efd153b47a988a9e22a",
+  "Dependencies": [
+    { "PackId": "core-rules", "MinimumVersion": "2.0.0" },
+    { "PackId": "standard-cards", "MinimumVersion": "2.0.0" }
+  ],
+  "ContentFiles": [ "cards-and-deck.json" ]
+}

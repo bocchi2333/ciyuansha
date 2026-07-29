@@ -1,0 +1,22 @@
+Third-party software and assets used by CiyuanSha
+=================================================
+
+1. Noname (无名杀)
+   Source: https://github.com/libnoname/noname
+   Reviewed revision: 444c7278a6b4b4754eaad4299f77ab31ba8d1655
+   License: GPL-3.0-only
+   Usage: rule-event architecture, choice-flow concepts, skill metadata,
+   content-package structure, deterministic AI concepts, replay concepts,
+   and selected rule algorithms translated to C#.
+
+2. LXGW WenKai
+   License: SIL Open Font License 1.1
+   Local license: Assets/Licenses/LXGWWenKai-OFL-1.1.txt
+
+3. Source Han Serif
+   License: SIL Open Font License 1.1
+   Local license: Assets/Licenses/SourceHanSerif-OFL-1.1.txt
+
+4. User-authorized visual and audio resources
+   Provenance record: Assets/Licenses/UserAuthorizedAssets-2026-07-28.txt
+   Detailed ledger: Docs/asset-license-ledger.md

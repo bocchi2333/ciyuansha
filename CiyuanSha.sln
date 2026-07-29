@@ -5,6 +5,12 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CiyuanSha", "CiyuanSha.csproj", "{AEBA61A0-5A33-4EB9-864F-F8B66C75C2BB}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CiyuanSha.GameCore", "CiyuanSha.GameCore\CiyuanSha.GameCore.csproj", "{7CEC65E6-D938-40D5-8D5A-E3949C973A2A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CiyuanSha.GameCore.Tests", "CiyuanSha.GameCore.Tests\CiyuanSha.GameCore.Tests.csproj", "{1106C5BD-3D1B-4764-A2C0-E08D30EB54C2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CiyuanSha.GameCore.Simulations", "CiyuanSha.GameCore.Simulations\CiyuanSha.GameCore.Simulations.csproj", "{92DCD47B-D20F-4CD4-AED4-75664CBBD27F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -18,5 +24,17 @@ Global
 		{AEBA61A0-5A33-4EB9-864F-F8B66C75C2BB}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{AEBA61A0-5A33-4EB9-864F-F8B66C75C2BB}.Release|Any CPU.ActiveCfg = Debug|Any CPU
 		{AEBA61A0-5A33-4EB9-864F-F8B66C75C2BB}.Release|Any CPU.Build.0 = Debug|Any CPU
+		{7CEC65E6-D938-40D5-8D5A-E3949C973A2A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7CEC65E6-D938-40D5-8D5A-E3949C973A2A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7CEC65E6-D938-40D5-8D5A-E3949C973A2A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7CEC65E6-D938-40D5-8D5A-E3949C973A2A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1106C5BD-3D1B-4764-A2C0-E08D30EB54C2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1106C5BD-3D1B-4764-A2C0-E08D30EB54C2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1106C5BD-3D1B-4764-A2C0-E08D30EB54C2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1106C5BD-3D1B-4764-A2C0-E08D30EB54C2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{92DCD47B-D20F-4CD4-AED4-75664CBBD27F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{92DCD47B-D20F-4CD4-AED4-75664CBBD27F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{92DCD47B-D20F-4CD4-AED4-75664CBBD27F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{92DCD47B-D20F-4CD4-AED4-75664CBBD27F}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

@@ -1,0 +1,12 @@
+{
+  "Cards": [],
+  "Generals": [],
+  "Skills": [
+    { "SkillId": "boss_pressure", "DisplayName": "威压", "Description": "锁定技，Boss摸牌阶段额外摸一张牌。", "EffectId": "skill.boss_pressure", "Tags": 12, "UsageScope": "OncePerTurn", "Triggers": [ { "EventKind": "PhaseChanged", "EventStage": "After", "Priority": 20, "Scope": "owner" } ], "Ai": { "Benefit": 3, "Threat": 3 } },
+    { "SkillId": "boss_phase_two", "DisplayName": "焚界", "Description": "锁定技，体力首次降至一半时进入第二阶段并获得强化。", "EffectId": "skill.boss_phase_two", "Tags": 28, "UsageScope": "OncePerMatch", "Triggers": [ { "EventKind": "Damage", "EventStage": "After", "Priority": 90, "FirstDo": true, "Scope": "owner" } ], "Marks": [ { "MarkId": "boss_phase", "DisplayName": "阶段", "IsPublic": true, "InitialValue": 1, "MaximumValue": 2 } ], "Ai": { "Benefit": 5, "Threat": 5 } }
+  ],
+  "Decks": [],
+  "Bosses": [
+    { "BossId": "boss_jifenxin", "GeneralId": "jifenxin", "BaseHealth": 6, "HealthPerHero": 2, "PhaseTwoHealthRatio": 0.5, "PhaseTwoSkillIds": [ "boss_pressure", "boss_phase_two" ] }
+  ]
+}

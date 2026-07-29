@@ -91,6 +91,13 @@ public partial class PlayPhaseInputBridge : Node
             return false;
         }
 
+        if (source?.CanUseVermilionFan == true && damageType == DamageType.Physical)
+        {
+            // The generic V2 choice renderer exposes both natures. The legacy
+            // one-click control uses the tactically meaningful fire conversion.
+            damageType = DamageType.Fire;
+        }
+
         LanMultiplayerManager? networkManager = LanMultiplayerManager.Instance;
         if (networkManager?.IsConnected == true)
         {
@@ -291,7 +298,9 @@ public partial class PlayPhaseInputBridge : Node
                 TargetPeerId = slashTargetPeerIds.FirstOrDefault(),
                 TargetPeerIds = slashTargetPeerIds,
                 DamageValue = card.DamageValue,
-                DamageType = DamageType.Physical.ToString()
+                DamageType = source.CanUseVermilionFan && card.CardType == CardType.Slash
+                    ? DamageType.Fire.ToString()
+                    : DamageType.Physical.ToString()
             };
 
             LanMultiplayerManager? slashNetworkManager = LanMultiplayerManager.Instance;

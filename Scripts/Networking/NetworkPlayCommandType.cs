@@ -25,5 +25,10 @@ public enum NetworkPlayCommandType
     DeclineHandCardSelection = 17,
     ChooseGeneral = 18,
     ReadyState = 19,
-    ReconnectRequest = 20
+    ReconnectRequest = 20,
+
+    // V2 is the only command transported during a match. Values 1-17 remain
+    // local presentation-adapter actions and are never accepted as wire input.
+    SubmitChoice = 100,
+    JoinSpectator = 101
 }

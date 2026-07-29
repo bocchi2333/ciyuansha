@@ -20,5 +20,6 @@ public enum EquipmentEffectType
     SerpentSpear = 12,
     IceSword = 13,
     GudingBlade = 14,
-    SilverLion = 15
+    SilverLion = 15,
+    VermilionFan = 16
 }

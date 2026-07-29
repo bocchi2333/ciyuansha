@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using CiyuanSha.GameCore.Choices;
+using CiyuanSha.GameCore.Networking;
 
 namespace CiyuanSha.Networking;
 
@@ -7,6 +9,18 @@ namespace CiyuanSha.Networking;
 /// </summary>
 public class NetworkPlayCommand
 {
+    public int ProtocolVersion { get; set; } = ProtocolV2.Version;
+
+    public string EngineApiVersion { get; set; } = ProtocolV2.EngineApiVersion;
+
+    public long StateRevision { get; set; }
+
+    public string RequestId { get; set; } = string.Empty;
+
+    public string ReconnectToken { get; set; } = string.Empty;
+
+    public ChoiceResult? ChoiceResult { get; set; }
+
     public NetworkPlayCommandType CommandType { get; set; }
 
     public int TargetPeerId { get; set; }
