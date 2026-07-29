@@ -397,6 +397,39 @@ public sealed class GameEngine
             case PendingOperationKind.NullificationResponse:
                 ResolveNullificationResponse(operation, result.SelectedOptionIds.Single());
                 break;
+            case PendingOperationKind.FireAttackReveal:
+                ResolveFireAttackReveal(operation, ParseCardOption(result.SelectedOptionIds.Single()));
+                break;
+            case PendingOperationKind.FireAttackDiscard:
+                ResolveFireAttackDiscard(operation, result.SelectedOptionIds.Single());
+                break;
+            case PendingOperationKind.BorrowSwordVictim:
+                ResolveBorrowSwordVictim(operation, ParseSeatOption(result.SelectedOptionIds.Single()));
+                break;
+            case PendingOperationKind.BorrowSwordSlash:
+                ResolveBorrowSwordSlash(operation, result.SelectedOptionIds.Single());
+                break;
+            case PendingOperationKind.DoubleSwordsChoice:
+                ResolveDoubleSwordsChoice(operation, result.SelectedOptionIds.Single());
+                break;
+            case PendingOperationKind.GreenDragonFollowUp:
+                ResolveGreenDragonFollowUp(operation, result.SelectedOptionIds.Single());
+                break;
+            case PendingOperationKind.StoneAxeCost:
+                ResolveStoneAxeCost(operation, result.SelectedOptionIds);
+                break;
+            case PendingOperationKind.IceSwordCards:
+                ResolveIceSwordCards(operation, result.SelectedOptionIds);
+                break;
+            case PendingOperationKind.KylinMountChoice:
+                ResolveKylinMountChoice(operation, result.SelectedOptionIds.Single());
+                break;
+            case PendingOperationKind.SerpentSpearPlayCost:
+                ResolveSerpentSpearPlayCost(operation, result.SelectedOptionIds);
+                break;
+            case PendingOperationKind.SerpentSpearResponseCost:
+                ResolveSerpentSpearResponseCost(operation, result.SelectedOptionIds);
+                break;
             default:
                 throw new InvalidOperationException($"Unsupported pending operation: {operation.Kind}");
         }
@@ -422,6 +455,21 @@ public sealed class GameEngine
             {
                 options.Add(new ChoiceOption($"action:recast:{cardId}", ChoiceOptionKind.Action, "action.recast", cardId, AiValue: 0.5));
             }
+        }
+
+        if (HasEquippedCard(player, "serpent_spear")
+            && player.Hand.Count >= 2
+            && (player.SlashUsesThisTurn == 0 || HasEquippedCard(player, "crossbow"))
+            && State.Players.Values.Any(target => target.IsAlive
+                && target.SeatId != player.SeatId
+                && EffectiveDistance(player.SeatId, target.SeatId) <= AttackRange(player)))
+        {
+            options.Add(new ChoiceOption(
+                "action:serpent_spear",
+                ChoiceOptionKind.Skill,
+                "equipment.serpent_spear.virtual_slash",
+                "serpent_spear",
+                AiValue: 4));
         }
 
         foreach (string skillId in player.SkillIds)
@@ -456,6 +504,12 @@ public sealed class GameEngine
         {
             string skillId = optionId["action:skill:".Length..];
             BeginSkillAction(sourceSeatId, skillId);
+            return;
+        }
+
+        if (string.Equals(optionId, "action:serpent_spear", StringComparison.Ordinal))
+        {
+            RequestSerpentSpearPlayCost(sourceSeatId);
             return;
         }
 
@@ -497,16 +551,22 @@ public sealed class GameEngine
                 break;
             case "card.ex_nihilo":
                 MoveHandCardToProcessing(sourceSeatId, cardInstanceId);
-                DrawCards(source, 2);
-                FinishUsedCard(cardInstanceId);
+                Emit(RuleEventKind.CardUsed, sourceSeatId, new[] { sourceSeatId }, new CardMoveRuleEventPayload(
+                    cardInstanceId, CardZone.Hand, CardZone.Processing, sourceSeatId));
+                BeginNullificationChain(new PendingOperation
+                {
+                    SourceSeatId = sourceSeatId,
+                    TargetSeatId = sourceSeatId,
+                    CardInstanceId = cardInstanceId
+                }, new[] { sourceSeatId });
                 break;
             case "card.peach_garden":
                 MoveHandCardToProcessing(sourceSeatId, cardInstanceId);
-                foreach (PlayerState target in AlivePlayersInSeatOrder(sourceSeatId))
-                {
-                    Heal(sourceSeatId, target.SeatId, 1);
-                }
-                FinishUsedCard(cardInstanceId);
+                BeginSequentialTargetEffect(
+                    sourceSeatId,
+                    cardInstanceId,
+                    "card.peach_garden",
+                    AlivePlayersInSeatOrder(sourceSeatId).Select(player => player.SeatId));
                 break;
             case "card.harvest":
                 MoveHandCardToProcessing(sourceSeatId, cardInstanceId);
@@ -515,7 +575,7 @@ public sealed class GameEngine
             case "card.barbarians":
             case "card.arrow_barrage":
                 MoveHandCardToProcessing(sourceSeatId, cardInstanceId);
-                BeginMassResponse(sourceSeatId, cardInstanceId, definition.EffectId == "card.barbarians");
+                BeginMassResponse(sourceSeatId, cardInstanceId, definition.EffectId);
                 break;
             case "card.equipment":
                 Equip(sourceSeatId, cardInstanceId, definition);
@@ -582,7 +642,7 @@ public sealed class GameEngine
     {
         List<ChoiceOption> targets = State.Players.Values
             .Where(player => player.IsAlive
-                && (definition.EffectId == "card.iron_chain" || player.SeatId != sourceSeatId)
+                && (definition.EffectId is "card.iron_chain" or "card.fire_attack" || player.SeatId != sourceSeatId)
                 && CanCardTarget(sourceSeatId, player, definition))
             .OrderBy(player => EffectiveDistance(sourceSeatId, player.SeatId))
             .ThenBy(player => player.SeatId)
@@ -593,7 +653,15 @@ public sealed class GameEngine
                 player.SeatId.ToString(),
                 AiValue: -_mode.GetAttitude(State, sourceSeatId, player.SeatId)))
             .ToList();
-        int maximum = definition.EffectId == "card.iron_chain" ? Math.Min(2, targets.Count) : 1;
+        bool isSlash = definition.EffectId is "card.slash" or "card.fire_slash" or "card.thunder_slash";
+        bool fangtianMultiTarget = isSlash
+            && State.Players[sourceSeatId].Hand.Count == 1
+            && HasEquippedCard(State.Players[sourceSeatId], "fangtian_halberd");
+        int maximum = definition.EffectId == "card.iron_chain"
+            ? Math.Min(2, targets.Count)
+            : fangtianMultiTarget
+                ? Math.Min(3, targets.Count)
+                : 1;
         SetChoice(
             sourceSeatId,
             ChoiceKind.SelectTarget,
@@ -615,15 +683,33 @@ public sealed class GameEngine
     {
         CardState card = State.Cards[operation.CardInstanceId];
         CardDefinition definition = _content.Cards[card.DefinitionId];
-        MoveHandCardToProcessing(operation.SourceSeatId, operation.CardInstanceId);
+        CardZone fromZone = card.Zone;
+        if (fromZone == CardZone.Hand)
+        {
+            MoveHandCardToProcessing(operation.SourceSeatId, operation.CardInstanceId);
+        }
+        else if (fromZone != CardZone.Processing)
+        {
+            throw new InvalidOperationException("Used card is not in hand or processing area.");
+        }
         Emit(RuleEventKind.CardUsed, operation.SourceSeatId, targets, new CardMoveRuleEventPayload(
             operation.CardInstanceId,
-            CardZone.Hand,
+            fromZone,
             CardZone.Processing,
             operation.SourceSeatId));
 
         if (IsNullifiable(definition))
         {
+            if (definition.EffectId == "card.iron_chain")
+            {
+                BeginSequentialTargetEffect(
+                    operation.SourceSeatId,
+                    operation.CardInstanceId,
+                    definition.EffectId,
+                    targets,
+                    emitCardUsed: false);
+                return;
+            }
             BeginNullificationChain(operation, targets);
             return;
         }
@@ -639,8 +725,24 @@ public sealed class GameEngine
                     throw new InvalidOperationException("Slash can only be used once in the play phase without a modifier.");
                 }
                 State.Players[operation.SourceSeatId].SlashUsesThisTurn++;
+                int slashDamage = 1 + State.Players[operation.SourceSeatId].Marks.GetValueOrDefault("wine_damage");
+                State.Players[operation.SourceSeatId].Marks.Remove("wine_damage");
                 CommitMutation();
-                RequestDodge(operation.SourceSeatId, targets[0], operation.CardInstanceId, operation.DamageNatureOverride);
+                DamageNature slashNature = operation.DamageNatureOverride ?? definition.EffectId switch
+                {
+                    "card.fire_slash" => DamageNature.Fire,
+                    "card.thunder_slash" => DamageNature.Thunder,
+                    _ => DamageNature.Physical
+                };
+                BeginSequentialTargetEffect(
+                    operation.SourceSeatId,
+                    operation.CardInstanceId,
+                    definition.EffectId,
+                    targets,
+                    emitCardUsed: false,
+                    requiresNullification: false,
+                    damageNature: slashNature,
+                    damageAmount: slashDamage);
                 break;
             case "card.duel":
                 RequestDuelSlash(operation.SourceSeatId, targets[0], operation.SourceSeatId, operation.CardInstanceId);
@@ -664,8 +766,10 @@ public sealed class GameEngine
                 RequestTargetCardSelection(operation.SourceSeatId, targets[0], operation.CardInstanceId, steal: true);
                 break;
             case "card.fire_attack":
-                Damage(operation.SourceSeatId, targets[0], 1, DamageNature.Fire, operation.CardInstanceId);
-                FinishUsedCard(operation.CardInstanceId);
+                BeginFireAttack(operation.SourceSeatId, targets[0], operation.CardInstanceId);
+                break;
+            case "card.borrow_sword":
+                BeginBorrowSword(operation.SourceSeatId, targets[0], operation.CardInstanceId);
                 break;
             default:
                 FinishUsedCard(operation.CardInstanceId);
@@ -679,13 +783,18 @@ public sealed class GameEngine
 
     private void BeginNullificationChain(PendingOperation original, IReadOnlyList<int> targets)
     {
+        if (targets.Count != 1)
+        {
+            throw new InvalidOperationException("Nullification chains resolve exactly one target at a time.");
+        }
         PendingOperation operation = new()
         {
             Kind = PendingOperationKind.NullificationResponse,
             SourceSeatId = original.SourceSeatId,
             TargetSeatId = targets.FirstOrDefault(),
             CardInstanceId = original.CardInstanceId,
-            DamageNatureOverride = original.DamageNatureOverride
+            DamageNatureOverride = original.DamageNatureOverride,
+            Continuation = original.Continuation
         };
         foreach (int target in targets)
         {
@@ -712,7 +821,14 @@ public sealed class GameEngine
             if (operation.OtherSeatId % 2 == 1)
             {
                 Emit(RuleEventKind.CardCancelled, operation.SourceSeatId, operation.EffectTargets, new TextRuleEventPayload("card.nullified"));
-                FinishUsedCard(operation.CardInstanceId);
+                if (operation.Continuation is not null)
+                {
+                    ContinueSequentialTargetEffect(operation.Continuation);
+                }
+                else
+                {
+                    FinishUsedCard(operation.CardInstanceId);
+                }
             }
             else
             {
@@ -754,6 +870,11 @@ public sealed class GameEngine
     private void ResolveCardAfterNullification(PendingOperation operation)
     {
         int[] targets = operation.EffectTargets.ToArray();
+        if (operation.Continuation is not null)
+        {
+            ResolveSequentialTargetEffect(operation.Continuation, targets[0]);
+            return;
+        }
         string effectId = _content.Cards[State.Cards[operation.CardInstanceId].DefinitionId].EffectId;
         switch (effectId)
         {
@@ -779,7 +900,13 @@ public sealed class GameEngine
                 RequestTargetCardSelection(operation.SourceSeatId, targets[0], operation.CardInstanceId, steal: true);
                 break;
             case "card.fire_attack":
-                Damage(operation.SourceSeatId, targets[0], 1, DamageNature.Fire, operation.CardInstanceId);
+                BeginFireAttack(operation.SourceSeatId, targets[0], operation.CardInstanceId);
+                break;
+            case "card.borrow_sword":
+                BeginBorrowSword(operation.SourceSeatId, targets[0], operation.CardInstanceId);
+                break;
+            case "card.ex_nihilo":
+                DrawCards(State.Players[operation.SourceSeatId], 2);
                 FinishUsedCard(operation.CardInstanceId);
                 break;
             default:
@@ -788,9 +915,835 @@ public sealed class GameEngine
         }
     }
 
-    private void RequestDodge(int sourceSeatId, int targetSeatId, string cardInstanceId, DamageNature? natureOverride = null)
+    private void BeginSequentialTargetEffect(
+        int sourceSeatId,
+        string cardInstanceId,
+        string effectId,
+        IEnumerable<int> targetSeatIds,
+        bool emitCardUsed = true,
+        bool requiresNullification = true,
+        DamageNature? damageNature = null,
+        int damageAmount = 0)
+    {
+        PendingOperation sequence = new()
+        {
+            Kind = PendingOperationKind.SequentialTargetEffect,
+            SourceSeatId = sourceSeatId,
+            CardInstanceId = cardInstanceId,
+            EffectId = effectId,
+            RequiresNullification = requiresNullification,
+            DamageNatureOverride = damageNature,
+            DamageAmount = damageAmount
+        };
+        foreach (int targetSeatId in targetSeatIds.Distinct())
+        {
+            sequence.RemainingTargets.Enqueue(targetSeatId);
+        }
+        if (emitCardUsed)
+        {
+            Emit(RuleEventKind.CardUsed, sourceSeatId, sequence.RemainingTargets, new CardMoveRuleEventPayload(
+                cardInstanceId,
+                CardZone.Hand,
+                CardZone.Processing,
+                sourceSeatId));
+        }
+        ContinueSequentialTargetEffect(sequence);
+    }
+
+    private void ContinueSequentialTargetEffect(PendingOperation sequence)
+    {
+        while (sequence.RemainingTargets.Count > 0)
+        {
+            int targetSeatId = sequence.RemainingTargets.Dequeue();
+            if (!State.Players.TryGetValue(targetSeatId, out PlayerState? target) || !target.IsAlive)
+            {
+                continue;
+            }
+            sequence.TargetSeatId = targetSeatId;
+            if (!sequence.RequiresNullification)
+            {
+                ResolveSequentialTargetEffect(sequence, targetSeatId);
+                return;
+            }
+            BeginNullificationChain(new PendingOperation
+            {
+                SourceSeatId = sequence.SourceSeatId,
+                TargetSeatId = targetSeatId,
+                CardInstanceId = sequence.CardInstanceId,
+                Continuation = sequence
+            }, new[] { targetSeatId });
+            return;
+        }
+
+        if (sequence.EffectId == "card.harvest")
+        {
+            foreach (string remaining in State.ProcessingArea
+                .Where(cardId => cardId != sequence.CardInstanceId)
+                .ToArray())
+            {
+                MoveProcessingCardToDiscard(remaining);
+            }
+        }
+        FinishUsedCard(sequence.CardInstanceId);
+    }
+
+    private void ResolveSequentialTargetEffect(PendingOperation sequence, int targetSeatId)
+    {
+        switch (sequence.EffectId)
+        {
+            case "card.slash":
+            case "card.fire_slash":
+            case "card.thunder_slash":
+                if (ShouldTriggerDoubleSwords(sequence.SourceSeatId, targetSeatId))
+                {
+                    RequestDoubleSwordsChoice(sequence, targetSeatId);
+                }
+                else
+                {
+                    RequestSequenceDodge(sequence, targetSeatId);
+                }
+                break;
+            case "card.iron_chain":
+                State.Players[targetSeatId].IsChained = !State.Players[targetSeatId].IsChained;
+                CommitMutation();
+                ContinueSequentialTargetEffect(sequence);
+                break;
+            case "card.peach_garden":
+                Heal(sequence.SourceSeatId, targetSeatId, 1);
+                ContinueSequentialTargetEffect(sequence);
+                break;
+            case "card.barbarians":
+                if (HasEquippedCard(State.Players[targetSeatId], "vine_armor"))
+                {
+                    Emit(RuleEventKind.CardCancelled, targetSeatId, new[] { targetSeatId }, new TextRuleEventPayload("equipment.vine_armor.mass_immunity"));
+                    ContinueSequentialTargetEffect(sequence);
+                }
+                else
+                {
+                    RequestMassResponse(sequence, targetSeatId, requiresSlash: true);
+                }
+                break;
+            case "card.arrow_barrage":
+                if (HasEquippedCard(State.Players[targetSeatId], "vine_armor"))
+                {
+                    Emit(RuleEventKind.CardCancelled, targetSeatId, new[] { targetSeatId }, new TextRuleEventPayload("equipment.vine_armor.mass_immunity"));
+                    ContinueSequentialTargetEffect(sequence);
+                }
+                else
+                {
+                    RequestMassResponse(sequence, targetSeatId, requiresSlash: false);
+                }
+                break;
+            case "card.harvest":
+                RequestHarvestPick(sequence, targetSeatId);
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported sequential card effect: {sequence.EffectId}");
+        }
+    }
+
+    private void BeginFireAttack(int sourceSeatId, int targetSeatId, string fireAttackCardId)
     {
         PlayerState target = State.Players[targetSeatId];
+        if (target.Hand.Count == 0)
+        {
+            FinishUsedCard(fireAttackCardId);
+            return;
+        }
+        List<ChoiceOption> options = target.Hand
+            .OrderBy(cardId => cardId, StringComparer.Ordinal)
+            .Select(cardId => new ChoiceOption(
+                $"card:{cardId}",
+                ChoiceOptionKind.Card,
+                "card.fire_attack.reveal_card",
+                cardId,
+                AiValue: -CardUseValue(cardId)))
+            .ToList();
+        SetChoice(
+            targetSeatId,
+            ChoiceKind.SelectCard,
+            "card.fire_attack.choose_reveal",
+            options,
+            PendingOperationKind.FireAttackReveal,
+            operation: new PendingOperation
+            {
+                Kind = PendingOperationKind.FireAttackReveal,
+                SourceSeatId = sourceSeatId,
+                TargetSeatId = targetSeatId,
+                CardInstanceId = fireAttackCardId
+            });
+    }
+
+    private void ResolveFireAttackReveal(PendingOperation operation, string revealedCardId)
+    {
+        PlayerState target = State.Players[operation.TargetSeatId];
+        if (!target.Hand.Contains(revealedCardId))
+        {
+            throw new InvalidOperationException("The revealed Fire Attack card is no longer in the target hand.");
+        }
+        CardSuit suit = State.Cards[revealedCardId].Suit;
+        Emit(RuleEventKind.CardRevealed, operation.TargetSeatId, new[] { operation.SourceSeatId }, new TextRuleEventPayload(
+            "card.fire_attack.revealed",
+            new Dictionary<string, string>
+            {
+                ["cardInstanceId"] = revealedCardId,
+                ["suit"] = suit.ToString()
+            }));
+
+        List<ChoiceOption> options = State.Players[operation.SourceSeatId].Hand
+            .Where(cardId => State.Cards[cardId].Suit == suit)
+            .OrderBy(cardId => cardId, StringComparer.Ordinal)
+            .Select(cardId => new ChoiceOption(
+                $"card:{cardId}",
+                ChoiceOptionKind.Card,
+                "card.fire_attack.discard_matching",
+                cardId,
+                AiValue: -CardUseValue(cardId)))
+            .ToList();
+        options.Add(new ChoiceOption("control:decline", ChoiceOptionKind.Control, "response.decline", AiValue: 0));
+        SetChoice(
+            operation.SourceSeatId,
+            ChoiceKind.Discard,
+            "card.fire_attack.choose_discard",
+            options,
+            PendingOperationKind.FireAttackDiscard,
+            operation: new PendingOperation
+            {
+                Kind = PendingOperationKind.FireAttackDiscard,
+                SourceSeatId = operation.SourceSeatId,
+                TargetSeatId = operation.TargetSeatId,
+                CardInstanceId = operation.CardInstanceId,
+                OtherCardInstanceId = revealedCardId
+            });
+    }
+
+    private void ResolveFireAttackDiscard(PendingOperation operation, string optionId)
+    {
+        if (optionId.StartsWith("card:", StringComparison.Ordinal))
+        {
+            string discardCardId = ParseCardOption(optionId);
+            if (State.Cards[discardCardId].Suit != State.Cards[operation.OtherCardInstanceId].Suit)
+            {
+                throw new InvalidOperationException("Fire Attack requires discarding a card of the revealed suit.");
+            }
+            DiscardFromHand(operation.SourceSeatId, discardCardId);
+            Damage(operation.SourceSeatId, operation.TargetSeatId, 1, DamageNature.Fire, operation.CardInstanceId);
+        }
+        FinishUsedCard(operation.CardInstanceId);
+    }
+
+    private void BeginBorrowSword(int sourceSeatId, int weaponHolderSeatId, string borrowSwordCardId)
+    {
+        PlayerState weaponHolder = State.Players[weaponHolderSeatId];
+        List<ChoiceOption> victims = State.Players.Values
+            .Where(player => player.IsAlive
+                && player.SeatId != weaponHolderSeatId
+                && EffectiveDistance(weaponHolderSeatId, player.SeatId) <= AttackRange(weaponHolder))
+            .OrderBy(player => player.SeatId)
+            .Select(player => new ChoiceOption(
+                $"seat:{player.SeatId}",
+                ChoiceOptionKind.Player,
+                "card.borrow_sword.victim",
+                player.SeatId.ToString(),
+                AiValue: -_mode.GetAttitude(State, sourceSeatId, player.SeatId)))
+            .ToList();
+        if (victims.Count == 0)
+        {
+            TransferBorrowedWeapon(sourceSeatId, weaponHolderSeatId);
+            FinishUsedCard(borrowSwordCardId);
+            return;
+        }
+        SetChoice(
+            sourceSeatId,
+            ChoiceKind.SelectTarget,
+            "card.borrow_sword.choose_victim",
+            victims,
+            PendingOperationKind.BorrowSwordVictim,
+            operation: new PendingOperation
+            {
+                Kind = PendingOperationKind.BorrowSwordVictim,
+                SourceSeatId = sourceSeatId,
+                TargetSeatId = weaponHolderSeatId,
+                CardInstanceId = borrowSwordCardId
+            });
+    }
+
+    private void ResolveBorrowSwordVictim(PendingOperation operation, int victimSeatId)
+    {
+        PlayerState holder = State.Players[operation.TargetSeatId];
+        if (!State.Players[victimSeatId].IsAlive
+            || victimSeatId == holder.SeatId
+            || EffectiveDistance(holder.SeatId, victimSeatId) > AttackRange(holder))
+        {
+            throw new InvalidOperationException("Borrow Sword victim is no longer a legal Slash target.");
+        }
+        List<ChoiceOption> options = holder.Hand
+            .Where(cardId => IsSlash(State.Cards[cardId]))
+            .OrderBy(cardId => cardId, StringComparer.Ordinal)
+            .Select(cardId => new ChoiceOption(
+                $"card:{cardId}",
+                ChoiceOptionKind.Card,
+                "card.borrow_sword.use_slash",
+                cardId,
+                AiValue: 4))
+            .ToList();
+        if (HasEquippedCard(holder, "serpent_spear") && holder.Hand.Count >= 2)
+        {
+            options.Add(new ChoiceOption("equipment:serpent_spear", ChoiceOptionKind.Skill, "equipment.serpent_spear.virtual_slash", AiValue: 3));
+        }
+        options.Add(new ChoiceOption("control:decline", ChoiceOptionKind.Control, "response.decline", AiValue: -2));
+        SetChoice(
+            holder.SeatId,
+            ChoiceKind.UseOrRespond,
+            "card.borrow_sword.request_slash",
+            options,
+            PendingOperationKind.BorrowSwordSlash,
+            operation: new PendingOperation
+            {
+                Kind = PendingOperationKind.BorrowSwordSlash,
+                SourceSeatId = operation.SourceSeatId,
+                TargetSeatId = holder.SeatId,
+                OtherSeatId = victimSeatId,
+                CardInstanceId = operation.CardInstanceId
+            });
+    }
+
+    private void ResolveBorrowSwordSlash(PendingOperation operation, string optionId)
+    {
+        if (string.Equals(optionId, "equipment:serpent_spear", StringComparison.Ordinal))
+        {
+            RequestSerpentSpearResponseCost(operation, operation.TargetSeatId);
+            return;
+        }
+        if (!optionId.StartsWith("card:", StringComparison.Ordinal))
+        {
+            TransferBorrowedWeapon(operation.SourceSeatId, operation.TargetSeatId);
+            FinishUsedCard(operation.CardInstanceId);
+            return;
+        }
+        string slashCardId = ParseCardOption(optionId);
+        if (!IsSlash(State.Cards[slashCardId]))
+        {
+            throw new InvalidOperationException("Borrow Sword response must be a Slash.");
+        }
+        MoveHandCardToProcessing(operation.TargetSeatId, slashCardId);
+        Emit(RuleEventKind.CardUsed, operation.TargetSeatId, new[] { operation.OtherSeatId }, new CardMoveRuleEventPayload(
+            slashCardId,
+            CardZone.Hand,
+            CardZone.Processing,
+            operation.TargetSeatId));
+        CardDefinition slash = _content.Cards[State.Cards[slashCardId].DefinitionId];
+        DamageNature nature = slash.EffectId switch
+        {
+            "card.fire_slash" => DamageNature.Fire,
+            "card.thunder_slash" => DamageNature.Thunder,
+            _ => DamageNature.Physical
+        };
+        RequestDodge(
+            operation.TargetSeatId,
+            operation.OtherSeatId,
+            slashCardId,
+            nature,
+            operation.CardInstanceId);
+    }
+
+    private void TransferBorrowedWeapon(int sourceSeatId, int weaponHolderSeatId)
+    {
+        PlayerState holder = State.Players[weaponHolderSeatId];
+        if (!holder.Equipment.Remove(EquipmentSlot.Weapon, out string? weaponCardId))
+        {
+            return;
+        }
+        State.Players[sourceSeatId].Hand.Add(weaponCardId);
+        MoveCard(weaponCardId, CardZone.Hand, sourceSeatId);
+        CommitMutation();
+        Emit(RuleEventKind.EquipmentChanged, sourceSeatId, new[] { weaponHolderSeatId }, new CardMoveRuleEventPayload(
+            weaponCardId,
+            CardZone.Equipment,
+            CardZone.Hand,
+            weaponHolderSeatId,
+            sourceSeatId));
+    }
+
+    private bool ShouldTriggerDoubleSwords(int sourceSeatId, int targetSeatId)
+    {
+        if (!HasEquippedCard(State.Players[sourceSeatId], "double_swords"))
+        {
+            return false;
+        }
+        string sourceGender = _content.Generals[State.Players[sourceSeatId].GeneralId].Gender;
+        string targetGender = _content.Generals[State.Players[targetSeatId].GeneralId].Gender;
+        return !string.IsNullOrWhiteSpace(sourceGender)
+            && !string.IsNullOrWhiteSpace(targetGender)
+            && !string.Equals(sourceGender, targetGender, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void RequestSerpentSpearPlayCost(int sourceSeatId)
+    {
+        List<ChoiceOption> options = State.Players[sourceSeatId].Hand
+            .OrderBy(cardId => cardId, StringComparer.Ordinal)
+            .Select(cardId => new ChoiceOption(
+                $"card:{cardId}",
+                ChoiceOptionKind.Card,
+                "equipment.serpent_spear.cost",
+                cardId,
+                AiValue: -CardUseValue(cardId)))
+            .ToList();
+        SetChoice(
+            sourceSeatId,
+            ChoiceKind.SelectCard,
+            "equipment.serpent_spear.choose_two",
+            options,
+            PendingOperationKind.SerpentSpearPlayCost,
+            minimum: 2,
+            maximum: 2,
+            operation: new PendingOperation
+            {
+                Kind = PendingOperationKind.SerpentSpearPlayCost,
+                SourceSeatId = sourceSeatId
+            });
+    }
+
+    private void ResolveSerpentSpearPlayCost(PendingOperation operation, IReadOnlyList<string> optionIds)
+    {
+        foreach (string optionId in optionIds)
+        {
+            DiscardFromHand(operation.SourceSeatId, ParseCardOption(optionId));
+        }
+        string virtualSlashId = CreateVirtualSlash(operation.SourceSeatId);
+        RequestCardTargets(operation.SourceSeatId, virtualSlashId, _content.Cards["slash"]);
+    }
+
+    private void RequestSerpentSpearResponseCost(PendingOperation original, int responderSeatId)
+    {
+        List<ChoiceOption> options = State.Players[responderSeatId].Hand
+            .OrderBy(cardId => cardId, StringComparer.Ordinal)
+            .Select(cardId => new ChoiceOption(
+                $"card:{cardId}",
+                ChoiceOptionKind.Card,
+                "equipment.serpent_spear.cost",
+                cardId,
+                AiValue: -CardUseValue(cardId)))
+            .ToList();
+        SetChoice(
+            responderSeatId,
+            ChoiceKind.SelectCard,
+            "equipment.serpent_spear.choose_two",
+            options,
+            PendingOperationKind.SerpentSpearResponseCost,
+            minimum: 2,
+            maximum: 2,
+            operation: new PendingOperation
+            {
+                Kind = PendingOperationKind.SerpentSpearResponseCost,
+                ResumeKind = original.Kind,
+                SourceSeatId = original.SourceSeatId,
+                TargetSeatId = original.TargetSeatId,
+                OtherSeatId = original.OtherSeatId,
+                CardInstanceId = original.CardInstanceId,
+                Continuation = original.Continuation
+            });
+    }
+
+    private void ResolveSerpentSpearResponseCost(PendingOperation operation, IReadOnlyList<string> optionIds)
+    {
+        foreach (string optionId in optionIds)
+        {
+            DiscardFromHand(operation.TargetSeatId, ParseCardOption(optionId));
+        }
+        switch (operation.ResumeKind)
+        {
+            case PendingOperationKind.DuelResponse:
+                RequestDuelSlash(operation.SourceSeatId, operation.OtherSeatId, operation.TargetSeatId, operation.CardInstanceId);
+                break;
+            case PendingOperationKind.RespondSlash:
+                ContinueSequentialTargetEffect(operation.Continuation
+                    ?? throw new InvalidOperationException("Serpent Spear mass response has no continuation."));
+                break;
+            case PendingOperationKind.BorrowSwordSlash:
+                string virtualSlashId = CreateVirtualSlash(operation.TargetSeatId);
+                Emit(RuleEventKind.CardUsed, operation.TargetSeatId, new[] { operation.OtherSeatId }, new TextRuleEventPayload("equipment.serpent_spear.virtual_slash"));
+                RequestDodge(
+                    operation.TargetSeatId,
+                    operation.OtherSeatId,
+                    virtualSlashId,
+                    DamageNature.Physical,
+                    operation.CardInstanceId);
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported Serpent Spear response: {operation.ResumeKind}");
+        }
+    }
+
+    private string CreateVirtualSlash(int sourceSeatId)
+    {
+        string instanceId = $"virtual-slash-{++_choiceSequence:D8}";
+        State.Cards.Add(instanceId, new CardState
+        {
+            InstanceId = instanceId,
+            DefinitionId = "slash",
+            Suit = CardSuit.None,
+            Rank = 0,
+            Zone = CardZone.Processing,
+            OwnerSeatId = sourceSeatId,
+            IsFaceUp = true
+        });
+        State.ProcessingArea.Add(instanceId);
+        CommitMutation();
+        Emit(RuleEventKind.SkillTriggered, sourceSeatId, new[] { sourceSeatId }, new TextRuleEventPayload("equipment.serpent_spear"));
+        return instanceId;
+    }
+
+    private void RequestDoubleSwordsChoice(PendingOperation sequence, int targetSeatId)
+    {
+        PlayerState target = State.Players[targetSeatId];
+        List<ChoiceOption> options = target.Hand
+            .OrderBy(cardId => cardId, StringComparer.Ordinal)
+            .Select(cardId => new ChoiceOption(
+                $"card:{cardId}",
+                ChoiceOptionKind.Card,
+                "equipment.double_swords.discard",
+                cardId,
+                AiValue: -CardUseValue(cardId)))
+            .ToList();
+        options.Add(new ChoiceOption("control:source_draw", ChoiceOptionKind.Control, "equipment.double_swords.source_draw", AiValue: -2));
+        SetChoice(
+            targetSeatId,
+            ChoiceKind.SelectControl,
+            "equipment.double_swords.choose",
+            options,
+            PendingOperationKind.DoubleSwordsChoice,
+            operation: new PendingOperation
+            {
+                Kind = PendingOperationKind.DoubleSwordsChoice,
+                SourceSeatId = sequence.SourceSeatId,
+                TargetSeatId = targetSeatId,
+                CardInstanceId = sequence.CardInstanceId,
+                DamageNatureOverride = sequence.DamageNatureOverride,
+                DamageAmount = sequence.DamageAmount,
+                Continuation = sequence
+            });
+    }
+
+    private void ResolveDoubleSwordsChoice(PendingOperation operation, string optionId)
+    {
+        if (optionId.StartsWith("card:", StringComparison.Ordinal))
+        {
+            DiscardFromHand(operation.TargetSeatId, ParseCardOption(optionId));
+        }
+        else
+        {
+            DrawCards(State.Players[operation.SourceSeatId], 1);
+        }
+        RequestDodge(
+            operation.SourceSeatId,
+            operation.TargetSeatId,
+            operation.CardInstanceId,
+            operation.DamageNatureOverride,
+            continuation: operation.Continuation,
+            damageAmount: operation.DamageAmount);
+    }
+
+    private void RequestSequenceDodge(PendingOperation sequence, int targetSeatId) => RequestDodge(
+        sequence.SourceSeatId,
+        targetSeatId,
+        sequence.CardInstanceId,
+        sequence.DamageNatureOverride,
+        continuation: sequence,
+        damageAmount: sequence.DamageAmount);
+
+    private bool TryRequestIceSword(PendingOperation slashOperation)
+    {
+        PlayerState source = State.Players[slashOperation.SourceSeatId];
+        PlayerState target = State.Players[slashOperation.TargetSeatId];
+        if (!HasEquippedCard(source, "ice_sword"))
+        {
+            return false;
+        }
+        List<ChoiceOption> cards = LegalOwnedCards(target)
+            .Select(cardId => new ChoiceOption(
+                $"card:{cardId}",
+                ChoiceOptionKind.Card,
+                "equipment.ice_sword.discard_target_card",
+                cardId,
+                AiValue: 2))
+            .ToList();
+        if (cards.Count == 0)
+        {
+            return false;
+        }
+        SetChoice(
+            source.SeatId,
+            ChoiceKind.SelectCard,
+            "equipment.ice_sword.choose_cards",
+            cards,
+            PendingOperationKind.IceSwordCards,
+            minimum: 1,
+            maximum: Math.Min(2, cards.Count),
+            allowCancel: true,
+            operation: CopySlashOperation(slashOperation, PendingOperationKind.IceSwordCards));
+        return true;
+    }
+
+    private void ResolveIceSwordCards(PendingOperation operation, IReadOnlyList<string> optionIds)
+    {
+        foreach (string optionId in optionIds)
+        {
+            DiscardOwnedCard(operation.TargetSeatId, ParseCardOption(optionId));
+        }
+        Emit(RuleEventKind.SkillTriggered, operation.SourceSeatId, new[] { operation.TargetSeatId }, new TextRuleEventPayload("equipment.ice_sword"));
+        CompleteAvoidedSlash(operation);
+    }
+
+    private bool TryRequestPostDodgeWeapon(PendingOperation slashOperation)
+    {
+        PlayerState source = State.Players[slashOperation.SourceSeatId];
+        if (HasEquippedCard(source, "stone_axe"))
+        {
+            List<ChoiceOption> costs = LegalOwnedCards(source)
+                .Where(cardId => cardId != slashOperation.CardInstanceId)
+                .Select(cardId => new ChoiceOption(
+                    $"card:{cardId}",
+                    ChoiceOptionKind.Card,
+                    "equipment.stone_axe.cost",
+                    cardId,
+                    AiValue: -CardUseValue(cardId)))
+                .ToList();
+            if (costs.Count >= 2)
+            {
+                SetChoice(
+                    source.SeatId,
+                    ChoiceKind.Discard,
+                    "equipment.stone_axe.choose_cost",
+                    costs,
+                    PendingOperationKind.StoneAxeCost,
+                    minimum: 2,
+                    maximum: 2,
+                    allowCancel: true,
+                    operation: CopySlashOperation(slashOperation, PendingOperationKind.StoneAxeCost));
+                return true;
+            }
+        }
+        if (HasEquippedCard(source, "green_dragon_blade"))
+        {
+            List<ChoiceOption> options = source.Hand
+                .Where(cardId => IsSlash(State.Cards[cardId]))
+                .OrderBy(cardId => cardId, StringComparer.Ordinal)
+                .Select(cardId => new ChoiceOption(
+                    $"card:{cardId}",
+                    ChoiceOptionKind.Card,
+                    "equipment.green_dragon_blade.use_slash",
+                    cardId,
+                    AiValue: 3))
+                .ToList();
+            if (options.Count > 0)
+            {
+                options.Add(new ChoiceOption("control:decline", ChoiceOptionKind.Control, "response.decline", AiValue: 0));
+                SetChoice(
+                    source.SeatId,
+                    ChoiceKind.UseOrRespond,
+                    "equipment.green_dragon_blade.follow_up",
+                    options,
+                    PendingOperationKind.GreenDragonFollowUp,
+                    operation: CopySlashOperation(slashOperation, PendingOperationKind.GreenDragonFollowUp));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void ResolveStoneAxeCost(PendingOperation operation, IReadOnlyList<string> optionIds)
+    {
+        foreach (string optionId in optionIds)
+        {
+            DiscardOwnedCard(operation.SourceSeatId, ParseCardOption(optionId));
+        }
+        Emit(RuleEventKind.SkillTriggered, operation.SourceSeatId, new[] { operation.TargetSeatId }, new TextRuleEventPayload("equipment.stone_axe"));
+        ApplySlashDamage(operation);
+        if (operation.Continuation is null)
+        {
+            CompleteAvoidedSlash(operation);
+        }
+    }
+
+    private void ResolveGreenDragonFollowUp(PendingOperation operation, string optionId)
+    {
+        if (!optionId.StartsWith("card:", StringComparison.Ordinal))
+        {
+            CompleteAvoidedSlash(operation);
+            return;
+        }
+        string slashCardId = ParseCardOption(optionId);
+        MoveHandCardToProcessing(operation.SourceSeatId, slashCardId);
+        Emit(RuleEventKind.CardUsed, operation.SourceSeatId, new[] { operation.TargetSeatId }, new CardMoveRuleEventPayload(
+            slashCardId,
+            CardZone.Hand,
+            CardZone.Processing,
+            operation.SourceSeatId));
+        CardDefinition slash = _content.Cards[State.Cards[slashCardId].DefinitionId];
+        DamageNature nature = slash.EffectId switch
+        {
+            "card.fire_slash" => DamageNature.Fire,
+            "card.thunder_slash" => DamageNature.Thunder,
+            _ => DamageNature.Physical
+        };
+        RequestDodge(
+            operation.SourceSeatId,
+            operation.TargetSeatId,
+            slashCardId,
+            nature,
+            operation.Continuation is null ? operation.CardInstanceId : string.Empty,
+            operation.Continuation,
+            1);
+    }
+
+    private void RequestKylinMountChoice(PendingOperation operation)
+    {
+        PlayerState target = State.Players[operation.TargetSeatId];
+        List<ChoiceOption> options = target.Equipment
+            .Where(entry => entry.Key is EquipmentSlot.OffensiveMount or EquipmentSlot.DefensiveMount)
+            .OrderBy(entry => entry.Key)
+            .Select(entry => new ChoiceOption(
+                $"card:{entry.Value}",
+                ChoiceOptionKind.Card,
+                "equipment.kylin_bow.discard_mount",
+                entry.Value,
+                AiValue: 3))
+            .ToList();
+        if (options.Count == 0)
+        {
+            if (operation.Continuation is not null)
+            {
+                ResumeContinuation(operation.Continuation);
+            }
+            return;
+        }
+        options.Add(new ChoiceOption("control:decline", ChoiceOptionKind.Control, "response.decline", AiValue: 0));
+        SetChoice(
+            operation.SourceSeatId,
+            ChoiceKind.SelectCard,
+            "equipment.kylin_bow.choose_mount",
+            options,
+            PendingOperationKind.KylinMountChoice,
+            operation: operation);
+    }
+
+    private void ResolveKylinMountChoice(PendingOperation operation, string optionId)
+    {
+        if (optionId.StartsWith("card:", StringComparison.Ordinal))
+        {
+            DiscardOwnedCard(operation.TargetSeatId, ParseCardOption(optionId));
+            Emit(RuleEventKind.SkillTriggered, operation.SourceSeatId, new[] { operation.TargetSeatId }, new TextRuleEventPayload("equipment.kylin_bow"));
+        }
+        if (operation.Continuation is not null)
+        {
+            ResumeContinuation(operation.Continuation);
+        }
+    }
+
+    private PendingOperation CopySlashOperation(PendingOperation source, PendingOperationKind kind) => new()
+    {
+        Kind = kind,
+        SourceSeatId = source.SourceSeatId,
+        TargetSeatId = source.TargetSeatId,
+        CardInstanceId = source.CardInstanceId,
+        OtherCardInstanceId = source.OtherCardInstanceId,
+        DamageNatureOverride = source.DamageNatureOverride,
+        DamageAmount = source.DamageAmount,
+        Continuation = source.Continuation
+    };
+
+    private IEnumerable<string> LegalOwnedCards(PlayerState player) => player.Hand
+        .Concat(player.Equipment.Values)
+        .Concat(player.JudgementArea)
+        .OrderBy(cardId => cardId, StringComparer.Ordinal);
+
+    private void DiscardOwnedCard(int ownerSeatId, string cardInstanceId)
+    {
+        PlayerState owner = State.Players[ownerSeatId];
+        if (owner.Hand.Contains(cardInstanceId))
+        {
+            DiscardFromHand(ownerSeatId, cardInstanceId);
+            return;
+        }
+        bool removed = owner.JudgementArea.Remove(cardInstanceId);
+        EquipmentSlot? slot = owner.Equipment
+            .Where(entry => entry.Value == cardInstanceId)
+            .Select(entry => (EquipmentSlot?)entry.Key)
+            .FirstOrDefault();
+        if (slot is not null)
+        {
+            removed |= owner.Equipment.Remove(slot.Value);
+        }
+        if (!removed)
+        {
+            throw new InvalidOperationException("The selected owned card is no longer available.");
+        }
+        State.DiscardPile.Add(cardInstanceId);
+        MoveCard(cardInstanceId, CardZone.DiscardPile, 0);
+        CommitMutation();
+        Emit(RuleEventKind.CardsDiscarded, ownerSeatId, new[] { ownerSeatId }, new CardMoveRuleEventPayload(
+            cardInstanceId,
+            slot is null ? CardZone.Judgement : CardZone.Equipment,
+            CardZone.DiscardPile,
+            ownerSeatId));
+        if (slot is not null)
+        {
+            HandleEquipmentLeft(owner, cardInstanceId);
+        }
+    }
+
+    private void CompleteAvoidedSlash(PendingOperation operation)
+    {
+        if (operation.Continuation is not null)
+        {
+            if (!string.Equals(operation.CardInstanceId, operation.Continuation.CardInstanceId, StringComparison.Ordinal))
+            {
+                FinishUsedCard(operation.CardInstanceId);
+            }
+            ContinueSequentialTargetEffect(operation.Continuation);
+            return;
+        }
+        FinishUsedCard(operation.CardInstanceId);
+        if (!string.IsNullOrWhiteSpace(operation.OtherCardInstanceId))
+        {
+            FinishUsedCard(operation.OtherCardInstanceId);
+        }
+    }
+
+    private void RequestDodge(
+        int sourceSeatId,
+        int targetSeatId,
+        string cardInstanceId,
+        DamageNature? natureOverride = null,
+        string followUpCardId = "",
+        PendingOperation? continuation = null,
+        int damageAmount = 0)
+    {
+        PlayerState target = State.Players[targetSeatId];
+        bool armorIgnored = SlashIgnoresArmor(sourceSeatId, cardInstanceId);
+        CardState sourceCard = State.Cards[cardInstanceId];
+        string sourceEffectId = _content.Cards[sourceCard.DefinitionId].EffectId;
+        bool normalSlash = sourceEffectId == "card.slash" && natureOverride.GetValueOrDefault(DamageNature.Physical) == DamageNature.Physical;
+        bool blackSlash = IsSlash(sourceCard) && sourceCard.Suit is CardSuit.Spade or CardSuit.Club;
+        if (!armorIgnored
+            && ((normalSlash && HasEquippedCard(target, "vine_armor"))
+                || (blackSlash && HasEquippedCard(target, "renwang_shield"))))
+        {
+            Emit(RuleEventKind.CardCancelled, targetSeatId, new[] { targetSeatId }, new TextRuleEventPayload(
+                HasEquippedCard(target, "vine_armor") ? "equipment.vine_armor.slash_immunity" : "equipment.renwang_shield"));
+            CompleteAvoidedSlash(new PendingOperation
+            {
+                SourceSeatId = sourceSeatId,
+                TargetSeatId = targetSeatId,
+                CardInstanceId = cardInstanceId,
+                OtherCardInstanceId = followUpCardId,
+                DamageNatureOverride = natureOverride,
+                Continuation = continuation,
+                DamageAmount = damageAmount
+            });
+            return;
+        }
         List<ChoiceOption> options = target.Hand
             .Where(cardId => _content.Cards[State.Cards[cardId].DefinitionId].EffectId == "card.dodge")
             .Select(cardId => new ChoiceOption($"card:{cardId}", ChoiceOptionKind.Card, "card.dodge", cardId, AiValue: 10))
@@ -799,6 +1752,10 @@ public sealed class GameEngine
             && target.Marks.GetValueOrDefault("skill:auto_dodge:round") != State.RoundNumber)
         {
             options.Add(new ChoiceOption("skill:auto_dodge", ChoiceOptionKind.Skill, "skill.auto_dodge", AiValue: 12));
+        }
+        if (!armorIgnored && HasEquippedCard(target, "eight_diagram"))
+        {
+            options.Add(new ChoiceOption("equipment:eight_diagram", ChoiceOptionKind.Skill, "equipment.eight_diagram", AiValue: 9));
         }
         options.Add(new ChoiceOption("control:decline", ChoiceOptionKind.Control, "response.decline", AiValue: -10));
         SetChoice(
@@ -813,36 +1770,115 @@ public sealed class GameEngine
                 SourceSeatId = sourceSeatId,
                 TargetSeatId = targetSeatId,
                 CardInstanceId = cardInstanceId,
-                DamageNatureOverride = natureOverride
+                OtherCardInstanceId = followUpCardId,
+                DamageNatureOverride = natureOverride,
+                Continuation = continuation,
+                DamageAmount = damageAmount
             });
     }
 
     private void ResolveDodgeResponse(PendingOperation operation, string optionId)
     {
+        bool avoidedDamage = false;
         if (optionId.StartsWith("card:", StringComparison.Ordinal))
         {
             DiscardFromHand(operation.TargetSeatId, ParseCardOption(optionId));
+            avoidedDamage = true;
         }
         else if (string.Equals(optionId, "skill:auto_dodge", StringComparison.Ordinal))
         {
             State.Players[operation.TargetSeatId].Marks["skill:auto_dodge:round"] = State.RoundNumber;
             CommitMutation();
             Emit(RuleEventKind.SkillTriggered, operation.TargetSeatId, new[] { operation.TargetSeatId }, new TextRuleEventPayload("skill.auto_dodge"));
+            avoidedDamage = true;
+        }
+        else if (string.Equals(optionId, "equipment:eight_diagram", StringComparison.Ordinal))
+        {
+            CardState judgement = DrawTopCardToProcessing();
+            bool red = judgement.Suit is CardSuit.Heart or CardSuit.Diamond;
+            Emit(RuleEventKind.Judgement, operation.TargetSeatId, new[] { operation.TargetSeatId }, new TextRuleEventPayload(
+                red ? "equipment.eight_diagram.success" : "equipment.eight_diagram.failure",
+                new Dictionary<string, string> { ["cardInstanceId"] = judgement.InstanceId }));
+            MoveProcessingCardToDiscard(judgement.InstanceId);
+            avoidedDamage = red;
+            if (!red)
+            {
+                if (TryRequestIceSword(operation))
+                {
+                    return;
+                }
+                ApplySlashDamage(operation);
+            }
         }
         else
         {
-            CardDefinition slash = _content.Cards[State.Cards[operation.CardInstanceId].DefinitionId];
-            DamageNature nature = operation.DamageNatureOverride ?? slash.EffectId switch
+            if (TryRequestIceSword(operation))
             {
-                "card.fire_slash" => DamageNature.Fire,
-                "card.thunder_slash" => DamageNature.Thunder,
-                _ => DamageNature.Physical
-            };
-            int amount = 1 + State.Players[operation.SourceSeatId].Marks.GetValueOrDefault("wine_damage");
-            State.Players[operation.SourceSeatId].Marks.Remove("wine_damage");
-            Damage(operation.SourceSeatId, operation.TargetSeatId, amount, nature, operation.CardInstanceId);
+                return;
+            }
+            ApplySlashDamage(operation);
         }
-        FinishUsedCard(operation.CardInstanceId);
+        if (avoidedDamage)
+        {
+            if (TryRequestPostDodgeWeapon(operation))
+            {
+                return;
+            }
+            CompleteAvoidedSlash(operation);
+            return;
+        }
+        if (operation.Continuation is not null)
+        {
+            if (!string.Equals(operation.CardInstanceId, operation.Continuation.CardInstanceId, StringComparison.Ordinal))
+            {
+                FinishUsedCard(operation.CardInstanceId);
+            }
+            return;
+        }
+        CompleteAvoidedSlash(operation);
+    }
+
+    private void ApplySlashDamage(PendingOperation operation)
+    {
+        CardDefinition slash = _content.Cards[State.Cards[operation.CardInstanceId].DefinitionId];
+        DamageNature nature = operation.DamageNatureOverride ?? slash.EffectId switch
+        {
+            "card.fire_slash" => DamageNature.Fire,
+            "card.thunder_slash" => DamageNature.Thunder,
+            _ => DamageNature.Physical
+        };
+        int amount = operation.DamageAmount > 0
+            ? operation.DamageAmount
+            : 1 + State.Players[operation.SourceSeatId].Marks.GetValueOrDefault("wine_damage");
+        if (operation.DamageAmount == 0)
+        {
+            State.Players[operation.SourceSeatId].Marks.Remove("wine_damage");
+        }
+        if (HasEquippedCard(State.Players[operation.SourceSeatId], "guding_blade")
+            && State.Players[operation.TargetSeatId].Hand.Count == 0)
+        {
+            amount++;
+        }
+        PendingOperation? damageContinuation = operation.Continuation;
+        if (HasEquippedCard(State.Players[operation.SourceSeatId], "kylin_bow")
+            && State.Players[operation.TargetSeatId].Equipment.Keys.Any(slot => slot is EquipmentSlot.OffensiveMount or EquipmentSlot.DefensiveMount))
+        {
+            damageContinuation = new PendingOperation
+            {
+                Kind = PendingOperationKind.KylinMountChoice,
+                SourceSeatId = operation.SourceSeatId,
+                TargetSeatId = operation.TargetSeatId,
+                CardInstanceId = operation.CardInstanceId,
+                Continuation = operation.Continuation
+            };
+        }
+        Damage(
+            operation.SourceSeatId,
+            operation.TargetSeatId,
+            amount,
+            nature,
+            operation.CardInstanceId,
+            damageContinuation);
     }
 
     private void RequestDuelSlash(int originalSourceSeatId, int responderSeatId, int otherSeatId, string cardInstanceId)
@@ -852,6 +1888,10 @@ public sealed class GameEngine
             .Where(cardId => IsSlash(State.Cards[cardId]))
             .Select(cardId => new ChoiceOption($"card:{cardId}", ChoiceOptionKind.Card, "card.slash", cardId, AiValue: 8))
             .ToList();
+        if (HasEquippedCard(responder, "serpent_spear") && responder.Hand.Count >= 2)
+        {
+            options.Add(new ChoiceOption("equipment:serpent_spear", ChoiceOptionKind.Skill, "equipment.serpent_spear.virtual_slash", AiValue: 7));
+        }
         options.Add(new ChoiceOption("control:decline", ChoiceOptionKind.Control, "response.decline", AiValue: -8));
         SetChoice(
             responderSeatId,
@@ -871,6 +1911,11 @@ public sealed class GameEngine
 
     private void ResolveSlashResponse(PendingOperation operation, string optionId)
     {
+        if (string.Equals(optionId, "equipment:serpent_spear", StringComparison.Ordinal))
+        {
+            RequestSerpentSpearResponseCost(operation, operation.TargetSeatId);
+            return;
+        }
         if (optionId.StartsWith("card:", StringComparison.Ordinal))
         {
             DiscardFromHand(operation.TargetSeatId, ParseCardOption(optionId));
@@ -880,62 +1925,61 @@ public sealed class GameEngine
             }
             else
             {
-                ContinueMassResponse(operation);
+                ContinueSequentialTargetEffect(operation.Continuation
+                    ?? throw new InvalidOperationException("Mass response has no continuation."));
             }
             return;
         }
 
-        Damage(operation.OtherSeatId, operation.TargetSeatId, 1, DamageNature.Physical, operation.CardInstanceId);
+        Damage(
+            operation.OtherSeatId,
+            operation.TargetSeatId,
+            1,
+            DamageNature.Physical,
+            operation.CardInstanceId,
+            operation.Kind == PendingOperationKind.DuelResponse ? null : operation.Continuation);
         if (operation.Kind == PendingOperationKind.DuelResponse)
         {
             FinishUsedCard(operation.CardInstanceId);
         }
-        else
-        {
-            ContinueMassResponse(operation);
-        }
     }
 
-    private void BeginMassResponse(int sourceSeatId, string cardInstanceId, bool requiresSlash)
+    private void BeginMassResponse(int sourceSeatId, string cardInstanceId, string effectId)
     {
-        Queue<int> targets = new(AlivePlayersInSeatOrder(sourceSeatId).Where(player => player.SeatId != sourceSeatId).Select(player => player.SeatId));
-        PendingOperation operation = new()
-        {
-            Kind = requiresSlash ? PendingOperationKind.RespondSlash : PendingOperationKind.RespondDodge,
-            SourceSeatId = sourceSeatId,
-            OtherSeatId = sourceSeatId,
-            CardInstanceId = cardInstanceId
-        };
-        foreach (int target in targets)
-        {
-            operation.RemainingTargets.Enqueue(target);
-        }
-        ContinueMassResponse(operation);
+        BeginSequentialTargetEffect(
+            sourceSeatId,
+            cardInstanceId,
+            effectId,
+            AlivePlayersInSeatOrder(sourceSeatId).Where(player => player.SeatId != sourceSeatId).Select(player => player.SeatId));
     }
 
-    private void ContinueMassResponse(PendingOperation operation)
+    private void RequestMassResponse(PendingOperation sequence, int targetSeatId, bool requiresSlash)
     {
-        if (operation.RemainingTargets.Count == 0)
-        {
-            FinishUsedCard(operation.CardInstanceId);
-            return;
-        }
-
-        operation.TargetSeatId = operation.RemainingTargets.Dequeue();
-        bool requiresSlash = operation.Kind == PendingOperationKind.RespondSlash;
-        PlayerState target = State.Players[operation.TargetSeatId];
+        PlayerState target = State.Players[targetSeatId];
         List<ChoiceOption> options = target.Hand
             .Where(cardId => requiresSlash ? IsSlash(State.Cards[cardId]) : _content.Cards[State.Cards[cardId].DefinitionId].EffectId == "card.dodge")
             .Select(cardId => new ChoiceOption($"card:{cardId}", ChoiceOptionKind.Card, requiresSlash ? "card.slash" : "card.dodge", cardId, AiValue: 8))
             .ToList();
+        if (requiresSlash && HasEquippedCard(target, "serpent_spear") && target.Hand.Count >= 2)
+        {
+            options.Add(new ChoiceOption("equipment:serpent_spear", ChoiceOptionKind.Skill, "equipment.serpent_spear.virtual_slash", AiValue: 7));
+        }
         options.Add(new ChoiceOption("control:decline", ChoiceOptionKind.Control, "response.decline", AiValue: -8));
         SetChoice(
             target.SeatId,
             ChoiceKind.UseOrRespond,
             requiresSlash ? "response.slash" : "response.dodge",
             options,
-            operation.Kind,
-            operation: operation);
+            requiresSlash ? PendingOperationKind.RespondSlash : PendingOperationKind.RespondDodge,
+            operation: new PendingOperation
+            {
+                Kind = requiresSlash ? PendingOperationKind.RespondSlash : PendingOperationKind.RespondDodge,
+                SourceSeatId = sequence.SourceSeatId,
+                OtherSeatId = sequence.SourceSeatId,
+                TargetSeatId = targetSeatId,
+                CardInstanceId = sequence.CardInstanceId,
+                Continuation = sequence
+            });
     }
 
     private void RequestTargetCardSelection(int sourceSeatId, int targetSeatId, string usedCardId, bool steal)
@@ -1009,20 +2053,18 @@ public sealed class GameEngine
             operation.OtherSeatId == 1 ? CardZone.Hand : CardZone.DiscardPile,
             operation.TargetSeatId,
             operation.OtherSeatId == 1 ? operation.SourceSeatId : 0));
+        if (equipmentSlot is not null)
+        {
+            HandleEquipmentLeft(target, selectedCardId);
+        }
         FinishUsedCard(operation.CardInstanceId);
     }
 
     private void BeginHarvest(int sourceSeatId, string harvestCardId)
     {
-        PendingOperation operation = new()
+        int[] targetSeatIds = AlivePlayersInSeatOrder(sourceSeatId).Select(player => player.SeatId).ToArray();
+        foreach (int _ in targetSeatIds)
         {
-            Kind = PendingOperationKind.HarvestPick,
-            SourceSeatId = sourceSeatId,
-            CardInstanceId = harvestCardId
-        };
-        foreach (PlayerState player in AlivePlayersInSeatOrder(sourceSeatId))
-        {
-            operation.RemainingTargets.Enqueue(player.SeatId);
             if (State.DrawPile.Count == 0)
             {
                 ReshuffleDiscardPile();
@@ -1036,25 +2078,20 @@ public sealed class GameEngine
             }
         }
         CommitMutation();
-        ContinueHarvest(operation);
+        BeginSequentialTargetEffect(sourceSeatId, harvestCardId, "card.harvest", targetSeatIds);
     }
 
-    private void ContinueHarvest(PendingOperation operation)
+    private void RequestHarvestPick(PendingOperation sequence, int targetSeatId)
     {
         List<string> pool = State.ProcessingArea
-            .Where(cardId => cardId != operation.CardInstanceId)
+            .Where(cardId => cardId != sequence.CardInstanceId)
             .OrderBy(cardId => cardId, StringComparer.Ordinal)
             .ToList();
-        if (operation.RemainingTargets.Count == 0 || pool.Count == 0)
+        if (pool.Count == 0)
         {
-            foreach (string remaining in pool)
-            {
-                MoveProcessingCardToDiscard(remaining);
-            }
-            FinishUsedCard(operation.CardInstanceId);
+            ContinueSequentialTargetEffect(sequence);
             return;
         }
-        operation.TargetSeatId = operation.RemainingTargets.Dequeue();
         List<ChoiceOption> options = pool.Select(cardId => new ChoiceOption(
             $"card:{cardId}",
             ChoiceOptionKind.Card,
@@ -1062,12 +2099,19 @@ public sealed class GameEngine
             cardId,
             AiValue: CardUseValue(cardId))).ToList();
         SetChoice(
-            operation.TargetSeatId,
+            targetSeatId,
             ChoiceKind.SelectCard,
             "card.harvest.choose",
             options,
             PendingOperationKind.HarvestPick,
-            operation: operation);
+            operation: new PendingOperation
+            {
+                Kind = PendingOperationKind.HarvestPick,
+                SourceSeatId = sequence.SourceSeatId,
+                TargetSeatId = targetSeatId,
+                CardInstanceId = sequence.CardInstanceId,
+                Continuation = sequence
+            });
     }
 
     private void ResolveHarvestPick(PendingOperation operation, string cardId)
@@ -1080,7 +2124,8 @@ public sealed class GameEngine
         chooser.Hand.Add(cardId);
         MoveCard(cardId, CardZone.Hand, chooser.SeatId);
         CommitMutation();
-        ContinueHarvest(operation);
+        ContinueSequentialTargetEffect(operation.Continuation
+            ?? throw new InvalidOperationException("Harvest choice has no continuation."));
     }
 
     private void HandleCancelledChoice(PendingOperation operation)
@@ -1088,6 +2133,20 @@ public sealed class GameEngine
         if (operation.Kind == PendingOperationKind.PlayAction)
         {
             ChangePhase(GamePhase.Discard);
+            return;
+        }
+        if (operation.Kind == PendingOperationKind.StoneAxeCost)
+        {
+            CompleteAvoidedSlash(operation);
+            return;
+        }
+        if (operation.Kind == PendingOperationKind.IceSwordCards)
+        {
+            ApplySlashDamage(operation);
+            if (operation.Continuation is null)
+            {
+                CompleteAvoidedSlash(operation);
+            }
             return;
         }
         throw new InvalidOperationException("The cancelled choice has no cancellation handler.");
@@ -1433,7 +2492,13 @@ public sealed class GameEngine
         EmitPhaseChanged(GamePhase.Preparation);
     }
 
-    private void Damage(int sourceSeatId, int targetSeatId, int amount, DamageNature nature, string sourceCardId)
+    private void Damage(
+        int sourceSeatId,
+        int targetSeatId,
+        int amount,
+        DamageNature nature,
+        string sourceCardId,
+        PendingOperation? continuation = null)
     {
         if (amount <= 0 || !State.Players[targetSeatId].IsAlive)
         {
@@ -1455,6 +2520,8 @@ public sealed class GameEngine
             }
         }
         PlayerState target = State.Players[targetSeatId];
+        int baseDamageAmount = amount;
+        amount = AdjustDamageForArmor(sourceSeatId, target, amount, nature, sourceCardId);
         target.Health -= amount;
         List<PlayerState> damagedPlayers = new() { target };
         CommitMutation();
@@ -1466,9 +2533,10 @@ public sealed class GameEngine
             foreach (PlayerState chained in AlivePlayersInSeatOrder(targetSeatId).Where(player => player.SeatId != targetSeatId && player.IsChained).ToArray())
             {
                 chained.IsChained = false;
-                chained.Health -= amount;
+                int chainedAmount = AdjustDamageForArmor(sourceSeatId, chained, baseDamageAmount, nature, sourceCardId);
+                chained.Health -= chainedAmount;
                 damagedPlayers.Add(chained);
-                Emit(RuleEventKind.Damage, sourceSeatId, new[] { chained.SeatId }, new DamageRuleEventPayload(amount, nature, sourceCardId, true));
+                Emit(RuleEventKind.Damage, sourceSeatId, new[] { chained.SeatId }, new DamageRuleEventPayload(chainedAmount, nature, sourceCardId, true));
             }
             CommitMutation();
         }
@@ -1498,15 +2566,45 @@ public sealed class GameEngine
                 Emit(RuleEventKind.SkillTriggered, resonator.SeatId, new[] { targetSeatId }, new TextRuleEventPayload("skill.elemental_resonance"));
             }
         }
-        BeginDyingSequence(sourceSeatId, damagedPlayers.Where(player => player.Health <= 0));
+        BeginDyingSequence(sourceSeatId, damagedPlayers.Where(player => player.Health <= 0), continuation);
     }
 
-    private void BeginDyingSequence(int sourceSeatId, IEnumerable<PlayerState> dyingPlayers)
+    private int AdjustDamageForArmor(
+        int sourceSeatId,
+        PlayerState target,
+        int amount,
+        DamageNature nature,
+        string sourceCardId)
+    {
+        bool ignored = sourceSeatId > 0
+            && !string.IsNullOrWhiteSpace(sourceCardId)
+            && State.Cards.ContainsKey(sourceCardId)
+            && SlashIgnoresArmor(sourceSeatId, sourceCardId);
+        if (ignored)
+        {
+            return amount;
+        }
+        if (nature == DamageNature.Fire && HasEquippedCard(target, "vine_armor"))
+        {
+            amount++;
+        }
+        if (amount > 1 && HasEquippedCard(target, "silver_lion"))
+        {
+            amount = 1;
+        }
+        return amount;
+    }
+
+    private void BeginDyingSequence(
+        int sourceSeatId,
+        IEnumerable<PlayerState> dyingPlayers,
+        PendingOperation? continuation = null)
     {
         PendingOperation operation = new()
         {
             Kind = PendingOperationKind.DyingRescue,
-            SourceSeatId = sourceSeatId
+            SourceSeatId = sourceSeatId,
+            Continuation = continuation
         };
         foreach (PlayerState player in dyingPlayers.Where(player => player.IsAlive).DistinctBy(player => player.SeatId))
         {
@@ -1558,6 +2656,28 @@ public sealed class GameEngine
                 RequestDyingRescueChoice(operation, operation.RemainingTargets.Dequeue());
                 return;
             }
+        }
+
+        if (State.Status == MatchStatus.Running && operation.Continuation is not null)
+        {
+            PendingOperation continuation = operation.Continuation;
+            operation.Continuation = null;
+            ResumeContinuation(continuation);
+        }
+    }
+
+    private void ResumeContinuation(PendingOperation continuation)
+    {
+        switch (continuation.Kind)
+        {
+            case PendingOperationKind.SequentialTargetEffect:
+                ContinueSequentialTargetEffect(continuation);
+                break;
+            case PendingOperationKind.KylinMountChoice:
+                RequestKylinMountChoice(continuation);
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported continuation: {continuation.Kind}");
         }
     }
 
@@ -1655,6 +2775,7 @@ public sealed class GameEngine
                 killer.Equipment.Remove(_content.Cards[State.Cards[cardId].DefinitionId].EquipmentSlot!.Value);
                 MoveCard(cardId, CardZone.DiscardPile, 0);
                 State.DiscardPile.Add(cardId);
+                HandleEquipmentLeft(killer, cardId);
             }
             CommitMutation();
         }
@@ -1846,6 +2967,13 @@ public sealed class GameEngine
 
     private void FinishUsedCard(string cardId)
     {
+        if (cardId.StartsWith("virtual-slash-", StringComparison.Ordinal))
+        {
+            State.ProcessingArea.Remove(cardId);
+            State.Cards.Remove(cardId);
+            CommitMutation();
+            return;
+        }
         if (State.Cards[cardId].Zone == CardZone.Processing)
         {
             MoveProcessingCardToDiscard(cardId);
@@ -1890,6 +3018,7 @@ public sealed class GameEngine
             State.DiscardPile.Add(equipment.Value);
             MoveCard(equipment.Value, CardZone.DiscardPile, 0);
             CommitMutation();
+            HandleEquipmentLeft(target, equipment.Value);
         }
     }
 
@@ -1922,11 +3051,23 @@ public sealed class GameEngine
         {
             State.DiscardPile.Add(replaced);
             MoveCard(replaced, CardZone.DiscardPile, 0);
+            HandleEquipmentLeft(source, replaced);
         }
         source.Equipment[definition.EquipmentSlot.Value] = cardId;
         MoveCard(cardId, CardZone.Equipment, sourceSeatId);
         CommitMutation();
         Emit(RuleEventKind.EquipmentChanged, sourceSeatId, new[] { sourceSeatId }, new CardMoveRuleEventPayload(cardId, CardZone.Hand, CardZone.Equipment, sourceSeatId, sourceSeatId));
+    }
+
+    private void HandleEquipmentLeft(PlayerState owner, string cardInstanceId)
+    {
+        if (owner.IsAlive
+            && owner.Health < owner.MaxHealth
+            && string.Equals(State.Cards[cardInstanceId].DefinitionId, "silver_lion", StringComparison.Ordinal))
+        {
+            Heal(owner.SeatId, owner.SeatId, 1);
+            Emit(RuleEventKind.SkillTriggered, owner.SeatId, new[] { owner.SeatId }, new TextRuleEventPayload("equipment.silver_lion.left"));
+        }
     }
 
     private void MoveCard(string cardId, CardZone zone, int ownerSeatId)
@@ -2057,7 +3198,10 @@ public sealed class GameEngine
             "card.snatch" => distance <= 1 && hasCards,
             "card.dismantle" => hasCards,
             "card.fire_attack" => target.Hand.Count > 0,
-            "card.borrow_sword" => target.Equipment.ContainsKey(EquipmentSlot.Weapon),
+            "card.borrow_sword" => target.Equipment.ContainsKey(EquipmentSlot.Weapon)
+                && State.Players.Values.Any(victim => victim.IsAlive
+                    && victim.SeatId != target.SeatId
+                    && EffectiveDistance(target.SeatId, victim.SeatId) <= AttackRange(target)),
             "card.supply_shortage" => distance <= 1 && !HasDelayedTrick(target, definition.EffectId),
             "card.indulgence" => !HasDelayedTrick(target, definition.EffectId),
             "card.iron_chain" => true,
@@ -2106,7 +3250,7 @@ public sealed class GameEngine
             or "card.borrow_sword" or "card.indulgence" or "card.supply_shortage" or "card.iron_chain")
         {
             return State.Players.Values.Any(target => target.IsAlive
-                && (definition.EffectId == "card.iron_chain" || target.SeatId != source.SeatId)
+                && (definition.EffectId is "card.iron_chain" or "card.fire_attack" || target.SeatId != source.SeatId)
                 && CanCardTarget(source.SeatId, target, definition));
         }
         return true;
@@ -2116,6 +3260,10 @@ public sealed class GameEngine
 
     private bool HasEquippedCard(PlayerState player, string definitionId) => player.Equipment.Values
         .Any(instanceId => string.Equals(State.Cards[instanceId].DefinitionId, definitionId, StringComparison.Ordinal));
+
+    private bool SlashIgnoresArmor(int sourceSeatId, string cardInstanceId) =>
+        IsSlash(State.Cards[cardInstanceId])
+        && HasEquippedCard(State.Players[sourceSeatId], "qinggang_sword");
 
     private bool HasSkill(PlayerState player, string skillId) => player.SkillIds.Contains(skillId);
 

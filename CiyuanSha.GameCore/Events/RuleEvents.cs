@@ -42,6 +42,7 @@ public enum RuleEventKind
     EquipmentChanged = 21,
     StateFaulted = 22,
     CardCancelled = 23,
+    CardRevealed = 24,
     Custom = 100
 }
 

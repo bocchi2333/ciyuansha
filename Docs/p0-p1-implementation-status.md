@@ -10,7 +10,7 @@
 | 纯规则状态、事件栈、确定性 RNG | `CiyuanSha.GameCore/Domain`、`Events`、`Determinism` | 完成 |
 | 统一选择与裁剪视图 | `Choices`、`Domain/GameView.cs`、`UI/GenericChoicePanel.cs` | 完成 |
 | 网络 V2、握手、令牌、增量同步 | `Networking`、`Scripts/Networking` | 完成 |
-| 六阶段与标准/军争核心结算 | `Engine/GameEngine.cs`、`Data/Packs` | 完成；规则窄化见规则文档 |
+| 六阶段与标准/军争核心结算 | `Engine/GameEngine.cs`、`Data/Packs` | 完成；双层选择、逐目标无懈和装备向量均在纯内核 |
 | Skill V2 与五个内容包 | `Skills`、`Content`、`Data/Packs` | 完成 |
 | 12 名原创武将 | `ciyuansha-generals`、`general_catalog.json` | 完成 |
 | 单挑/身份/2v2/Boss | `Modes/GameModes.cs`、LAN 大厅模式配置 | 完成 |

@@ -37,12 +37,26 @@ internal enum PendingOperationKind
     JudgementReplacement = 11,
     SelectTargetCard = 12,
     HarvestPick = 13,
-    NullificationResponse = 14
+    NullificationResponse = 14,
+    FireAttackReveal = 15,
+    FireAttackDiscard = 16,
+    BorrowSwordVictim = 17,
+    BorrowSwordSlash = 18,
+    SequentialTargetEffect = 19,
+    DoubleSwordsChoice = 20,
+    GreenDragonFollowUp = 21,
+    StoneAxeCost = 22,
+    IceSwordCards = 23,
+    KylinMountChoice = 24,
+    SerpentSpearPlayCost = 25,
+    SerpentSpearResponseCost = 26
 }
 
 internal sealed class PendingOperation
 {
     public PendingOperationKind Kind { get; init; }
+
+    public PendingOperationKind ResumeKind { get; init; }
 
     public int SourceSeatId { get; init; }
 
@@ -56,11 +70,19 @@ internal sealed class PendingOperation
 
     public string SkillId { get; init; } = string.Empty;
 
+    public string EffectId { get; init; } = string.Empty;
+
     public DamageNature? DamageNatureOverride { get; set; }
+
+    public int DamageAmount { get; set; }
+
+    public bool RequiresNullification { get; set; } = true;
 
     public Queue<int> RemainingTargets { get; } = new();
 
     public Queue<int> RemainingDyingTargets { get; } = new();
 
     public Queue<int> EffectTargets { get; } = new();
+
+    public PendingOperation? Continuation { get; set; }
 }
