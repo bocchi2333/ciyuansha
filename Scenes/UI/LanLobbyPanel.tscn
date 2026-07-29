@@ -1,0 +1,316 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://Scripts/UI/LanLobbyPanel.cs" id="1_lan_lobby_panel"]
+[ext_resource type="Texture2D" path="res://Assets/UI/InkBattle/ink_mountain_lobby_v1.png" id="2_lobby_backdrop"]
+
+[node name="LanLobbyPanel" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_lan_lobby_panel")
+PlayerNameLineEditPath = NodePath("Panel/PlayerNameLineEdit")
+AddressLineEditPath = NodePath("Panel/AddressLineEdit")
+CharacterIdLineEditPath = NodePath("Panel/CharacterIdLineEdit")
+CharacterOptionButtonPath = NodePath("Panel/CharacterOptionButton")
+CharacterDescriptionLabelPath = NodePath("Panel/CharacterDescriptionLabel")
+StatusLabelPath = NodePath("Panel/StatusLabel")
+LanAddressLabelPath = NodePath("Panel/LanAddressLabel")
+PlayersLabelPath = NodePath("Panel/PlayersLabel")
+HostButtonPath = NodePath("Panel/HostButton")
+JoinButtonPath = NodePath("Panel/JoinButton")
+ReadyButtonPath = NodePath("Panel/ReadyButton")
+StartButtonPath = NodePath("Panel/StartButton")
+LeaveButtonPath = NodePath("Panel/LeaveButton")
+
+[node name="Backdrop" type="TextureRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+texture = ExtResource("2_lobby_backdrop")
+expand_mode = 1
+stretch_mode = 6
+
+[node name="BackdropTint" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.008, 0.012, 0.014, 0.38)
+
+[node name="BrandTitle" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = 0
+offset_left = 38.0
+offset_top = 20.0
+offset_right = 310.0
+offset_bottom = 78.0
+text = "次元杀"
+
+[node name="BrandSubtitle" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = 0
+offset_left = 42.0
+offset_top = 76.0
+offset_right = 430.0
+offset_bottom = 104.0
+text = "暗夜山门 · 局域网候战"
+
+[node name="Panel" type="Panel" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -570.0
+offset_top = -318.0
+offset_right = 570.0
+offset_bottom = 322.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="LobbyKickerLabel" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 28.0
+offset_top = 18.0
+offset_right = 220.0
+offset_bottom = 42.0
+text = "LAN MATCHMAKING"
+
+[node name="TitleLabel" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 26.0
+offset_top = 40.0
+offset_right = 500.0
+offset_bottom = 78.0
+theme_override_font_sizes/font_size = 28
+text = "候战大厅"
+
+[node name="TopRule" type="ColorRect" parent="Panel"]
+layout_mode = 0
+offset_left = 28.0
+offset_top = 82.0
+offset_right = 1112.0
+offset_bottom = 84.0
+mouse_filter = 2
+color = Color(0.745, 0.57, 0.325, 0.42)
+
+[node name="NetworkFrame" type="Panel" parent="Panel"]
+layout_mode = 0
+offset_left = 24.0
+offset_top = 100.0
+offset_right = 326.0
+offset_bottom = 488.0
+
+[node name="NetworkSectionLabel" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 42.0
+offset_top = 110.0
+offset_right = 308.0
+offset_bottom = 142.0
+text = "连接房间"
+
+[node name="NameFieldLabel" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 42.0
+offset_top = 154.0
+offset_right = 308.0
+offset_bottom = 178.0
+text = "你的称号"
+
+[node name="PlayerNameLineEdit" type="LineEdit" parent="Panel"]
+layout_mode = 0
+offset_left = 42.0
+offset_top = 180.0
+offset_right = 308.0
+offset_bottom = 224.0
+placeholder_text = "输入玩家名"
+text = "玩家"
+
+[node name="AddressFieldLabel" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 42.0
+offset_top = 238.0
+offset_right = 308.0
+offset_bottom = 262.0
+text = "主机地址"
+
+[node name="AddressLineEdit" type="LineEdit" parent="Panel"]
+layout_mode = 0
+offset_left = 42.0
+offset_top = 264.0
+offset_right = 308.0
+offset_bottom = 308.0
+placeholder_text = "IP 或 IP:端口"
+text = "127.0.0.1"
+
+[node name="HostButton" type="Button" parent="Panel"]
+layout_mode = 0
+offset_left = 42.0
+offset_top = 326.0
+offset_right = 170.0
+offset_bottom = 370.0
+text = "创建房间"
+
+[node name="JoinButton" type="Button" parent="Panel"]
+layout_mode = 0
+offset_left = 180.0
+offset_top = 326.0
+offset_right = 308.0
+offset_bottom = 370.0
+text = "加入房间"
+
+[node name="LanAddressLabel" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 42.0
+offset_top = 390.0
+offset_right = 308.0
+offset_bottom = 466.0
+text = "本机房间地址"
+autowrap_mode = 2
+
+[node name="GeneralSectionLabel" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 350.0
+offset_top = 110.0
+offset_right = 736.0
+offset_bottom = 142.0
+text = "选择武将"
+
+[node name="CharacterIdLineEdit" type="LineEdit" parent="Panel"]
+visible = false
+layout_mode = 0
+offset_left = 350.0
+offset_top = 144.0
+offset_right = 736.0
+offset_bottom = 146.0
+
+[node name="CharacterOptionButton" type="OptionButton" parent="Panel"]
+layout_mode = 0
+offset_left = 350.0
+offset_top = 150.0
+offset_right = 736.0
+offset_bottom = 194.0
+
+[node name="GeneralPortraitFrame" type="Panel" parent="Panel"]
+layout_mode = 0
+offset_left = 350.0
+offset_top = 210.0
+offset_right = 512.0
+offset_bottom = 488.0
+
+[node name="GeneralPortrait" type="TextureRect" parent="Panel"]
+layout_mode = 0
+offset_left = 358.0
+offset_top = 218.0
+offset_right = 504.0
+offset_bottom = 480.0
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 6
+
+[node name="GeneralInfoFrame" type="Panel" parent="Panel"]
+layout_mode = 0
+offset_left = 526.0
+offset_top = 210.0
+offset_right = 736.0
+offset_bottom = 488.0
+
+[node name="GeneralNameLabel" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 540.0
+offset_top = 222.0
+offset_right = 722.0
+offset_bottom = 258.0
+text = "武将"
+horizontal_alignment = 1
+
+[node name="CharacterDescriptionLabel" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 540.0
+offset_top = 270.0
+offset_right = 722.0
+offset_bottom = 474.0
+text = "武将信息"
+autowrap_mode = 2
+clip_text = true
+text_overrun_behavior = 3
+
+[node name="PlayersFrame" type="Panel" parent="Panel"]
+layout_mode = 0
+offset_left = 760.0
+offset_top = 100.0
+offset_right = 1116.0
+offset_bottom = 488.0
+
+[node name="PlayersSectionLabel" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 778.0
+offset_top = 110.0
+offset_right = 1098.0
+offset_bottom = 142.0
+text = "房间成员"
+
+[node name="PlayersLabel" type="RichTextLabel" parent="Panel"]
+layout_mode = 0
+offset_left = 778.0
+offset_top = 154.0
+offset_right = 1098.0
+offset_bottom = 470.0
+bbcode_enabled = true
+fit_content = false
+scroll_active = true
+text = "[color=#8C7D63]等待玩家加入房间……[/color]"
+
+[node name="BottomRule" type="ColorRect" parent="Panel"]
+layout_mode = 0
+offset_left = 28.0
+offset_top = 506.0
+offset_right = 1112.0
+offset_bottom = 508.0
+mouse_filter = 2
+color = Color(0.745, 0.57, 0.325, 0.32)
+
+[node name="StatusLabel" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 28.0
+offset_top = 520.0
+offset_right = 650.0
+offset_bottom = 616.0
+text = "尚未连接：创建房间，或输入朋友的局域网地址加入。"
+autowrap_mode = 2
+vertical_alignment = 1
+
+[node name="ReadyButton" type="Button" parent="Panel"]
+layout_mode = 0
+offset_left = 674.0
+offset_top = 548.0
+offset_right = 814.0
+offset_bottom = 596.0
+text = "准备迎战"
+
+[node name="StartButton" type="Button" parent="Panel"]
+layout_mode = 0
+offset_left = 826.0
+offset_top = 548.0
+offset_right = 974.0
+offset_bottom = 596.0
+text = "开始对局"
+
+[node name="LeaveButton" type="Button" parent="Panel"]
+layout_mode = 0
+offset_left = 986.0
+offset_top = 548.0
+offset_right = 1112.0
+offset_bottom = 596.0
+text = "离开房间"

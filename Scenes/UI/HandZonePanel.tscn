@@ -1,0 +1,83 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://Scripts/UI/HandZonePanel.cs" id="1_hand_zone_panel"]
+
+[node name="HandZonePanel" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_hand_zone_panel")
+CardsContainerPath = NodePath("Panel/VBox/CardsScroll/CardsContainer")
+StatusLabelPath = NodePath("Panel/VBox/StatusLabel")
+EndPhaseButtonPath = NodePath("Panel/VBox/BottomRow/EndPhaseButton")
+
+[node name="Panel" type="Panel" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TopAccent" type="ColorRect" parent="Panel"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 14.0
+offset_top = 5.0
+offset_right = -14.0
+offset_bottom = 7.0
+grow_horizontal = 2
+mouse_filter = 2
+color = Color(0.745, 0.57, 0.325, 0.44)
+
+[node name="VBox" type="VBoxContainer" parent="Panel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 12.0
+offset_top = 9.0
+offset_right = -12.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 4
+
+[node name="TitleLabel" type="Label" parent="Panel/VBox"]
+layout_mode = 2
+text = "手牌 · 选择与出牌"
+
+[node name="CardsScroll" type="ScrollContainer" parent="Panel/VBox"]
+custom_minimum_size = Vector2(0, 176)
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 2
+vertical_scroll_mode = 0
+
+[node name="CardsContainer" type="HBoxContainer" parent="Panel/VBox/CardsScroll"]
+layout_mode = 2
+theme_override_constants/separation = 5
+alignment = 1
+
+[node name="StatusLabel" type="Label" parent="Panel/VBox"]
+layout_mode = 2
+text = "请选择一张手牌。"
+text_overrun_behavior = 3
+
+[node name="BottomRow" type="HBoxContainer" parent="Panel/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+alignment = 2
+
+[node name="Spacer" type="Control" parent="Panel/VBox/BottomRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="EndPhaseButton" type="Button" parent="Panel/VBox/BottomRow"]
+custom_minimum_size = Vector2(150, 40)
+layout_mode = 2
+text = "结束出牌"

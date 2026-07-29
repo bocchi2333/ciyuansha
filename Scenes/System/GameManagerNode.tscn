@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://Scripts/Gameplay/Core/GameManager.cs" id="1_game_manager"]
+
+[node name="GameManager" type="Node"]
+process_mode = 1
+script = ExtResource("1_game_manager")
+ActionManagerPath = NodePath("/root/ActionManager")

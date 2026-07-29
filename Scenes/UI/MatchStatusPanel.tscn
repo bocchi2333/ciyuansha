@@ -1,0 +1,83 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://Scripts/UI/MatchStatusPanel.cs" id="1_match_status_panel"]
+
+[node name="MatchStatusPanel" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_match_status_panel")
+PhaseLabelPath = NodePath("Panel/VBox/HeadlineRow/PhaseLabel")
+TurnLabelPath = NodePath("Panel/VBox/HeadlineRow/TurnLabel")
+PilesLabelPath = NodePath("Panel/VBox/StatsRow/PilesLabel")
+SlashLabelPath = NodePath("Panel/VBox/StatsRow/SlashLabel")
+ResponseLabelPath = NodePath("Panel/VBox/ResponseLabel")
+ResultLabelPath = NodePath("Panel/VBox/ResultLabel")
+
+[node name="Panel" type="Panel" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBox" type="VBoxContainer" parent="Panel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 12.0
+offset_top = 11.0
+offset_right = -12.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 4
+
+[node name="HeadlineRow" type="HBoxContainer" parent="Panel/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="PhaseLabel" type="Label" parent="Panel/VBox/HeadlineRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "回合开始"
+
+[node name="TurnLabel" type="Label" parent="Panel/VBox/HeadlineRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "当前：玩家 1"
+horizontal_alignment = 2
+vertical_alignment = 1
+text_overrun_behavior = 3
+
+[node name="StatsRow" type="HBoxContainer" parent="Panel/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="PilesLabel" type="Label" parent="Panel/VBox/StatsRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "牌堆 -- · 弃牌 --"
+
+[node name="SlashLabel" type="Label" parent="Panel/VBox/StatsRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "杀 0/1"
+horizontal_alignment = 2
+
+[node name="ResponseLabel" type="Label" parent="Panel/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+text = "等待牌局状态。"
+autowrap_mode = 2
+vertical_alignment = 1
+
+[node name="ResultLabel" type="Label" parent="Panel/VBox"]
+layout_mode = 2
+text = "结果：--"
+text_overrun_behavior = 3

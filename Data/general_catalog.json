@@ -1,0 +1,74 @@
+{
+  "Generals": [
+    {
+      "GeneralId": "xingjianya",
+      "DisplayName": "Xing Jianya",
+      "Title": "Void Class Monitor",
+      "Gender": "Female",
+      "MaxHealth": 4,
+      "CardFileName": "IMG_20260423_125518.png",
+      "Summary": "Pressure attacker with discard pressure, judgement payoff, and burst potential.",
+      "SkillIds": [ "discard_strike", "judgement_draw", "first_damage_boost" ]
+    },
+    {
+      "GeneralId": "huanglubaiquan",
+      "DisplayName": "Huanglu Baiquan",
+      "Title": "Resource Tactician",
+      "Gender": "Male",
+      "MaxHealth": 4,
+      "CardFileName": "IMG_20260423_161312.png",
+      "Summary": "Utility and resource-routing general focused on card flow and judgement support.",
+      "SkillIds": [ "active_draw", "off_turn_loss_draw" ]
+    },
+    {
+      "GeneralId": "lishengming",
+      "DisplayName": "Li Shengming",
+      "Title": "Eternal Controller",
+      "Gender": "Male",
+      "MaxHealth": 5,
+      "CardFileName": "mmexport1777169744471.jpg",
+      "Summary": "High-end defensive general with auto dodge and extra draw tools.",
+      "SkillIds": [ "auto_dodge", "bonus_draw" ]
+    },
+    {
+      "GeneralId": "chenchen",
+      "DisplayName": "Chenchen",
+      "Title": "Thousand-Bell Resolve",
+      "Gender": "Female",
+      "MaxHealth": 4,
+      "CardFileName": "file_000000000f78720981f51191eb4b20cc.png",
+      "Summary": "Resource-cycle general with steady draw and active planning.",
+      "SkillIds": [ "bonus_draw", "active_draw" ]
+    },
+    {
+      "GeneralId": "hanfeiyang",
+      "DisplayName": "Han Feiyang",
+      "Title": "Relentless Momentum",
+      "Gender": "Male",
+      "MaxHealth": 4,
+      "CardFileName": "file_0000000017b07209a00bb1ec28212d8e.png",
+      "Summary": "Burst attacker built around card cost, pressure, and chain tempo.",
+      "SkillIds": [ "discard_strike" ]
+    },
+    {
+      "GeneralId": "funingna",
+      "DisplayName": "Funingna",
+      "Title": "Singer of Fortune",
+      "Gender": "Female",
+      "MaxHealth": 3,
+      "CardFileName": "file_000000003cdc720992d0d8f04661fe90.png",
+      "Summary": "Control-leaning general focused on damage response and hand flow.",
+      "SkillIds": [ "bonus_draw", "pain_draw" ]
+    },
+    {
+      "GeneralId": "jiefeng",
+      "DisplayName": "Jiefeng",
+      "Title": "Blade of Gale",
+      "Gender": "Male",
+      "MaxHealth": 4,
+      "CardFileName": "file_000000005864720998ce9b8a58e8e031.png",
+      "Summary": "Mobile defender that fits the automatic dodge skill shell.",
+      "SkillIds": [ "auto_dodge" ]
+    }
+  ]
+}

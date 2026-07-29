@@ -1,0 +1,13 @@
+CIYUANSHA USER-PROVIDED ASSET AUTHORIZATION RECORD
+
+Recorded: 2026-07-28
+
+The project owner confirmed the following for development use in CiyuanSha:
+
+1. Assets selected from E:\slay the spire have been authorized for use.
+2. General card images under E:\次元杀\武将卡牌 are AI-generated.
+
+This file records the project owner's authorization statement for engineering
+traceability. It is not a substitute for the underlying contract, grant, model
+terms, or release documentation. Those records should be archived and reviewed
+before commercial distribution.

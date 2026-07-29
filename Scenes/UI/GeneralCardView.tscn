@@ -1,0 +1,144 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://Scripts/UI/GeneralCardView.cs" id="1_general_card_view"]
+
+[node name="GeneralCardView" type="Control"]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 240.0
+offset_bottom = 360.0
+mouse_filter = 2
+script = ExtResource("1_general_card_view")
+PortraitTextureRectPath = NodePath("CardBackground/Portrait")
+NameLabelPath = NodePath("CardBackground/NameLabel")
+HealthLabelPath = NodePath("CardBackground/HealthLabel")
+HandCardLabelPath = NodePath("CardBackground/HandCardLabel")
+SkillLabelPath = NodePath("CardBackground/SkillLabel")
+HealthBarPath = NodePath("CardBackground/HealthBar")
+
+[node name="CardBackground" type="Panel" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="StateLine" type="ColorRect" parent="CardBackground"]
+layout_mode = 0
+offset_left = 10.0
+offset_top = 5.0
+offset_right = 230.0
+offset_bottom = 7.0
+mouse_filter = 2
+color = Color(0.545, 0.505, 0.425, 0.35)
+
+[node name="NameLabel" type="Label" parent="CardBackground"]
+layout_mode = 0
+offset_left = 12.0
+offset_top = 12.0
+offset_right = 150.0
+offset_bottom = 40.0
+theme_override_font_sizes/font_size = 20
+text = "武将"
+vertical_alignment = 1
+
+[node name="StateLabel" type="Label" parent="CardBackground"]
+layout_mode = 0
+offset_left = 148.0
+offset_top = 13.0
+offset_right = 228.0
+offset_bottom = 38.0
+theme_override_font_sizes/font_size = 12
+horizontal_alignment = 2
+vertical_alignment = 1
+
+[node name="Portrait" type="TextureRect" parent="CardBackground"]
+layout_mode = 0
+offset_left = 12.0
+offset_top = 44.0
+offset_right = 228.0
+offset_bottom = 236.0
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 6
+
+[node name="PortraitShade" type="ColorRect" parent="CardBackground"]
+layout_mode = 0
+offset_left = 12.0
+offset_top = 208.0
+offset_right = 228.0
+offset_bottom = 236.0
+mouse_filter = 2
+color = Color(0.01, 0.01, 0.009, 0.52)
+
+[node name="HealthBar" type="ProgressBar" parent="CardBackground"]
+layout_mode = 0
+offset_left = 12.0
+offset_top = 242.0
+offset_right = 228.0
+offset_bottom = 254.0
+show_percentage = false
+
+[node name="HealthLabel" type="Label" parent="CardBackground"]
+layout_mode = 0
+offset_left = 12.0
+offset_top = 260.0
+offset_right = 104.0
+offset_bottom = 282.0
+theme_override_font_sizes/font_size = 14
+text = "体力：4/4"
+vertical_alignment = 1
+
+[node name="HealthBeads" type="HBoxContainer" parent="CardBackground"]
+layout_mode = 0
+offset_left = 108.0
+offset_top = 260.0
+offset_right = 228.0
+offset_bottom = 282.0
+mouse_filter = 2
+theme_override_constants/separation = 3
+alignment = 2
+
+[node name="HandCardLabel" type="Label" parent="CardBackground"]
+layout_mode = 0
+offset_left = 12.0
+offset_top = 284.0
+offset_right = 228.0
+offset_bottom = 304.0
+theme_override_font_sizes/font_size = 13
+text = "手牌：0 | 攻距：1"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SkillLabel" type="Label" parent="CardBackground"]
+layout_mode = 0
+offset_left = 12.0
+offset_top = 306.0
+offset_right = 228.0
+offset_bottom = 328.0
+theme_override_font_sizes/font_size = 11
+text = "阵营：未定 | 技能：无"
+horizontal_alignment = 1
+vertical_alignment = 1
+text_overrun_behavior = 3
+
+[node name="EquipmentTags" type="HBoxContainer" parent="CardBackground"]
+layout_mode = 0
+offset_left = 10.0
+offset_top = 332.0
+offset_right = 230.0
+offset_bottom = 354.0
+mouse_filter = 2
+theme_override_constants/separation = 3
+alignment = 1
+
+[node name="CardFooter" type="ColorRect" parent="CardBackground"]
+layout_mode = 0
+offset_left = 18.0
+offset_top = 356.0
+offset_right = 222.0
+offset_bottom = 358.0
+mouse_filter = 2
+color = Color(0.745, 0.57, 0.325, 0.34)

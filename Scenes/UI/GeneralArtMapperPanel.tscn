@@ -1,0 +1,91 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://Scripts/UI/GeneralArtMapperPanel.cs" id="1_general_art_mapper"]
+
+[node name="GeneralArtMapperPanel" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_general_art_mapper")
+GeneralOptionButtonPath = NodePath("Panel/GeneralOptionButton")
+ImageListPath = NodePath("Panel/ImageList")
+PreviewTextureRectPath = NodePath("Panel/PreviewTextureRect")
+CurrentMappingLabelPath = NodePath("Panel/CurrentMappingLabel")
+StatusLabelPath = NodePath("Panel/StatusLabel")
+SaveButtonPath = NodePath("Panel/SaveButton")
+ReloadButtonPath = NodePath("Panel/ReloadButton")
+
+[node name="Panel" type="Panel" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TitleLabel" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 16.0
+offset_right = 420.0
+offset_bottom = 44.0
+theme_override_font_sizes/font_size = 24
+text = "General Art Mapper"
+
+[node name="GeneralOptionButton" type="OptionButton" parent="Panel"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 60.0
+offset_right = 340.0
+offset_bottom = 92.0
+
+[node name="CurrentMappingLabel" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 100.0
+offset_right = 340.0
+offset_bottom = 124.0
+text = "Current mapping: none"
+
+[node name="ImageList" type="ItemList" parent="Panel"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 136.0
+offset_right = 340.0
+offset_bottom = 520.0
+
+[node name="PreviewTextureRect" type="TextureRect" parent="Panel"]
+layout_mode = 0
+offset_left = 380.0
+offset_top = 60.0
+offset_right = 760.0
+offset_bottom = 520.0
+expand_mode = 1
+stretch_mode = 5
+
+[node name="SaveButton" type="Button" parent="Panel"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 540.0
+offset_right = 160.0
+offset_bottom = 576.0
+text = "Save Mapping"
+
+[node name="ReloadButton" type="Button" parent="Panel"]
+layout_mode = 0
+offset_left = 176.0
+offset_top = 540.0
+offset_right = 316.0
+offset_bottom = 576.0
+text = "Reload"
+
+[node name="StatusLabel" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 590.0
+offset_right = 760.0
+offset_bottom = 620.0
+text = "Status"

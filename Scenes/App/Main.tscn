@@ -1,0 +1,67 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://Scripts/App/MainScreen.cs" id="1_main_screen"]
+[ext_resource type="PackedScene" path="res://Scenes/UI/LanLobbyPanel.tscn" id="2_lan_lobby_panel"]
+[ext_resource type="PackedScene" path="res://Scenes/UI/MatchBoardManager.tscn" id="3_match_board_manager"]
+[ext_resource type="PackedScene" path="res://Scenes/UI/MatchHudPanel.tscn" id="4_match_hud_panel"]
+[ext_resource type="PackedScene" path="res://Scenes/UI/PresentationSettingsPanel.tscn" id="5_presentation_settings"]
+[ext_resource type="PackedScene" path="res://Scenes/UI/SystemDialogPanel.tscn" id="6_system_dialog"]
+
+[node name="Main" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+script = ExtResource("1_main_screen")
+LobbyRootPath = NodePath("LobbyRoot")
+MatchRootPath = NodePath("MatchRoot")
+
+[node name="Background" type="ColorRect" parent="."]
+z_index = -200
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.008, 0.01, 0.01, 1)
+
+[node name="LobbyRoot" parent="." instance=ExtResource("2_lan_lobby_panel")]
+layout_mode = 1
+
+[node name="MatchRoot" type="Control" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+
+[node name="MatchBoardManager" parent="MatchRoot" instance=ExtResource("3_match_board_manager")]
+layout_mode = 1
+
+[node name="MatchHudPanel" parent="MatchRoot" instance=ExtResource("4_match_hud_panel")]
+layout_mode = 1
+
+[node name="PresentationSettingsPanel" parent="." instance=ExtResource("5_presentation_settings")]
+layout_mode = 1
+
+[node name="SystemDialogPanel" parent="." instance=ExtResource("6_system_dialog")]
+layout_mode = 1
+
+[node name="TransitionCurtain" type="ColorRect" parent="."]
+visible = false
+z_index = 120
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.006, 0.007, 0.007, 1)

@@ -1,0 +1,28 @@
+# Godot/.NET generated state
+.godot/
+bin/
+obj/
+**/bin/
+**/obj/
+
+# Local engine distribution and generated builds
+Godot_v4.6.2-stable_mono_win64/
+Build/
+CiyuanSha_PlaytestBuild/
+*.zip
+
+# Smoke-test and local runtime logs
+*.log
+*.err.log
+*.success
+
+# User-local settings and IDE files
+.vs/
+.vscode/
+*.user
+*.suo
+
+# OS metadata
+Thumbs.db
+Desktop.ini
+.DS_Store

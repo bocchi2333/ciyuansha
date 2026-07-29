@@ -1,0 +1,11 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="PackedScene" path="res://Scenes/UI/MatchBoardManager.tscn" id="1_match_board_manager"]
+[ext_resource type="Script" path="res://Scripts/Test/LanSmokeTestRunner.cs" id="2_lan_smoke_test_runner"]
+
+[node name="LanSmokeTest" type="Node"]
+
+[node name="MatchBoardManager" parent="." instance=ExtResource("1_match_board_manager")]
+
+[node name="LanSmokeTestRunner" type="Node" parent="."]
+script = ExtResource("2_lan_smoke_test_runner")
