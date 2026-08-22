@@ -16,7 +16,7 @@ namespace CiyuanSha.Gameplay.Characters;
 /// </summary>
 public partial class PlayerCharacter : Node
 {
-    public const string DefaultGeneralCardDirectory = "E:\\" + "\u6B21\u5143\u6740" + "\\" + "\u6B66\u5C06\u5361\u724C";
+    public static string DefaultGeneralCardDirectory => ProjectSettings.GlobalizePath("res://武将卡牌");
 
     public int OwnerPeerId { get; set; }
 

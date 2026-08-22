@@ -39,6 +39,8 @@ dotnet test CiyuanSha.GameCore.Tests/CiyuanSha.GameCore.Tests.csproj -c Debug
 - `Docs/gamecore-v2-rules.md`
 - `Docs/noname-source-ledger.md`
 
+Windows x64 自包含便携版的生成方法见 `Docs/windows-portable-release.md`。
+
 ## 许可证与上游归属
 
 项目采用 `GPL-3.0-only`。规则事件、统一选择、技能模型、内容包、AI、录像和标准/军争机制参考无名杀仓库 `libnoname/noname` 的提交 `444c7278a6b4b4754eaad4299f77ab31ba8d1655`，详细对应关系见移植台账。
