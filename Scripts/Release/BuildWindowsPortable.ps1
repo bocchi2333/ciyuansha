@@ -254,7 +254,8 @@ try {
             $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash *$relativePath"
         }
-    Set-Content -LiteralPath $checksumPath -Value $checksumLines -Encoding ASCII
+    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+    [IO.File]::WriteAllLines($checksumPath, [string[]]$checksumLines, $utf8WithoutBom)
 
     $zipPath = Join-Path $OutputRoot "$releaseName.zip"
     $zipChecksumPath = "$zipPath.sha256"
